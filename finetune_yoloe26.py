@@ -52,9 +52,21 @@ parser.add_argument("--mixup", type=float, default=0.05)
 parser.add_argument("--semseg_loss", type=str, default="False", choices=["True", "False"]) # if use segseg_loss 
 
 parser.add_argument("--override", type=str, default=None) 
+
+# freeze all but one2one_cv4
+parser.add_argument("--freeze_all_but_one2one_cv4", action="store_true", help="freeze all layers except one2one_cv4")
+
+
+
+
  # mobileclip2b
 #
 args = parser.parse_args()
+
+
+if args.freeze_all_but_one2one_cv4:
+    assert args.trainer == "YOLOETrainerFromScratch", "freeze_all_but_one2one_cv4 is only supported for YOLOETrainerFromScratch trainer"
+
 
 # Convert string to bool
 args.val = args.val == "True"
@@ -86,6 +98,14 @@ model=model.load(args.weight_path)
 if args.trainer == "YOLOETrainerFromScratch" or args.trainer== "YOLOESegTrainerFromScratch":
     print("Using YOLOETrainerFromScratch for training.")
     freeze = []
+    if args.freeze_all_but_one2one_cv4: 
+        head_index = len(model.model.model) - 1
+        freeze = list(range(0, head_index))
+        for name, child in model.model.model[-1].named_children():
+            if "one2one_cv4" not in name:
+                freeze.append(f"{head_index}.{name}")
+
+
     refer_data=None
     single_cls=False
 elif args.trainer == "YOLOEVPTrainer":
