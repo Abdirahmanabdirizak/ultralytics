@@ -918,12 +918,13 @@ class Exporter:
             import tensorflow as tf
         except ImportError:
             if not IS_PYTHON_3_13:
-                check_requirements("tensorflow>=2.0.0,<=2.19.0", "tf_keras<=2.19.0")
+                check_requirements("tensorflow>=2.0.0,<=2.19.0")
             else:
-                check_requirements("tensorflow>2.19.0", "tf_keras>2.19.0")
+                check_requirements("tensorflow>2.19.0")
             import tensorflow as tf
         check_requirements(
             (
+                f"tf_keras{'>2.19.0' if IS_PYTHON_3_13 else '<=2.19.0'}"
                 "sng4onnx>=1.0.1",  # required by 'onnx2tf' package
                 "onnx_graphsurgeon>=0.3.26",  # required by 'onnx2tf' package
                 "ai-edge-litert>=1.2.0" + (",<1.4.0" if MACOS else ""),  # required by 'onnx2tf' package
