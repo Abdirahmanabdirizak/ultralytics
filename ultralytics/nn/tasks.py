@@ -1482,6 +1482,16 @@ class SafeUnpickler(pickle.Unpickler):
         return super().find_class(module, name)
 
 
+def _make_safe_pickle_module(strict):
+    """Build a pickle-module shim compatible with both zip and raw-pickle torch.load paths."""
+    unpickler_cls = type("SafeUnpickler", (SafeUnpickler,), {"strict": strict})
+    safe_pickle = types.ModuleType("safe_pickle")
+    safe_pickle.Unpickler = unpickler_cls
+    safe_pickle.load = pickle.load
+    safe_pickle.loads = pickle.loads
+    return safe_pickle
+
+
 def torch_safe_load(weight, safe_only=False):
     """Attempt to load a PyTorch model with the torch.load() function. If a ModuleNotFoundError is raised, it catches
     the error, logs a warning message, and attempts to install the missing module via the check_requirements()
@@ -1526,11 +1536,8 @@ def torch_safe_load(weight, safe_only=False):
         ):
             if safe_only:
                 # Load via SafeUnpickler — use a subclass to set strict as class attr
-                # so torch's internal UnpicklerWrapper inherits it (thread-safe)
-                strict = safe_only == "strict"
-                unpickler_cls = type("SafeUnpickler", (SafeUnpickler,), {"strict": strict})
-                safe_pickle = types.ModuleType("safe_pickle")
-                safe_pickle.Unpickler = unpickler_cls
+                # so torch's internal UnpicklerWrapper inherits it (thread-safe).
+                safe_pickle = _make_safe_pickle_module(safe_only == "strict")
                 with open(file, "rb") as f:
                     ckpt = torch_load(f, pickle_module=safe_pickle, map_location="cpu")
             else:
@@ -1561,10 +1568,7 @@ def torch_safe_load(weight, safe_only=False):
         )
         check_requirements(e.name)  # install missing module
         if safe_only:
-            strict = safe_only == "strict"
-            unpickler_cls = type("SafeUnpickler", (SafeUnpickler,), {"strict": strict})
-            safe_pickle = types.ModuleType("safe_pickle")
-            safe_pickle.Unpickler = unpickler_cls
+            safe_pickle = _make_safe_pickle_module(safe_only == "strict")
             with open(file, "rb") as f:
                 ckpt = torch_load(f, pickle_module=safe_pickle, map_location="cpu")
         else:
