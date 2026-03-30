@@ -30,6 +30,7 @@ def log_config(**extra_kv):
             if not hasattr(trainer, k):
                 setattr(trainer, k, v)
         config = {k: getattr(trainer, k) for k in EXTRA_ATTRS if hasattr(trainer, k)}
+        config.update(extra_kv)
         # Update args.yaml
         args_path = Path(trainer.save_dir) / "args.yaml"
         if args_path.exists() and config:
