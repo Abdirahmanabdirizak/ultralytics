@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import torch
 from torch import optim
+from typing import Callable
+from .gram_newton_schulz import GramNewtonSchulz
 
 
 def zeropower_via_newtonschulz5(G: torch.Tensor, eps: float = 1e-7) -> torch.Tensor:
@@ -56,7 +58,13 @@ def zeropower_via_newtonschulz5(G: torch.Tensor, eps: float = 1e-7) -> torch.Ten
     return X
 
 
-def muon_update(grad: torch.Tensor, momentum: torch.Tensor, beta: float = 0.95, nesterov: bool = True) -> torch.Tensor:
+def muon_update(
+    grad: torch.Tensor,
+    momentum: torch.Tensor,
+    beta: float = 0.95,
+    nesterov: bool = True,
+    newtonschulz5: Callable = zeropower_via_newtonschulz5,
+) -> torch.Tensor:
     """Compute Muon optimizer update with momentum and orthogonalization.
 
     This function applies momentum to the gradient, optionally uses Nesterov acceleration, and then orthogonalizes the
@@ -87,11 +95,12 @@ def muon_update(grad: torch.Tensor, momentum: torch.Tensor, beta: float = 0.95, 
         - 4D tensors (conv filters) are reshaped to 2D as (out_channels, in_channels*height*width) for orthogonalization.
         - Final update is scaled by sqrt(max(1, dim[-2] / dim[-1])) to account for parameter dimensions.
     """
+
     momentum.lerp_(grad, 1 - beta)
     update = grad.lerp(momentum, beta) if nesterov else momentum
     if update.ndim == 4:  # for the case of conv filters
         update = update.view(len(update), -1)
-    update = zeropower_via_newtonschulz5(update)
+    update = newtonschulz5(update)
     update *= max(1, grad.size(-2) / grad.size(-1)) ** 0.5
     return update
 
@@ -175,6 +184,18 @@ class MuSGD(optim.Optimizer):
         super().__init__(params, defaults)
         self.muon = muon
         self.sgd = sgd
+        self.gram_ns = GramNewtonSchulz(
+            ns_coefficients=[  # num_steps fixed at 5
+                # original params
+                [3.4445, -4.7750, 2.0315],
+                [3.4445, -4.7750, 2.0315],
+                [3.4445, -4.7750, 2.0315],
+                [3.4445, -4.7750, 2.0315],
+                [3.4445, -4.7750, 2.0315],
+            ],
+            gram_newton_schulz_reset_iterations=[2],
+            ns_use_kernels=False,
+        )
 
     @torch.no_grad()
     def step(self, closure=None):
@@ -216,7 +237,11 @@ class MuSGD(optim.Optimizer):
                         state["momentum_buffer_SGD"] = torch.zeros_like(p)
 
                     update = muon_update(
-                        grad, state["momentum_buffer"], beta=group["momentum"], nesterov=group["nesterov"]
+                        grad,
+                        state["momentum_buffer"],
+                        beta=group["momentum"],
+                        nesterov=group["nesterov"],
+                        newtonschulz5=self.gram_ns,
                     )
                     p.add_(update.reshape(p.shape), alpha=-(lr * self.muon))
 
