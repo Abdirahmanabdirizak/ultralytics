@@ -34,6 +34,10 @@ The annotation editor supports all 5 YOLO task types:
 | **[OBB](../../datasets/obb/index.md)**           | Oriented Box   | Rotated bounding boxes (4 corners)                        |
 | **[Classify](../../datasets/classify/index.md)** | Class Selector | Image-level labels                                        |
 
+!!! tip "Multi-Task Annotations"
+
+    All 5 annotation types are stored together on each image. You can switch the dataset's active task type without losing existing annotations — they are preserved and reappear when you switch back.
+
 ### Task Details
 
 ??? info "Object Detection"
@@ -300,13 +304,13 @@ Auto-apply mode speeds up Smart annotation by automatically saving the SAM mask 
 
 When Smart mode is active, a model picker appears in the toolbar. Five models are available — choose based on the speed vs. accuracy trade-off that suits your dataset:
 
-| Model             | Size    | Speed    | Notes                       |
-| ----------------- | ------- | -------- | --------------------------- |
-| **SAM 2.1 Tiny**  | 74.5 MB | Fastest  |                             |
-| **SAM 2.1 Small** | 88 MB   | Fast     | Default                     |
-| **SAM 2.1 Base**  | 154 MB  | Moderate |                             |
-| **SAM 2.1 Large** | 428 MB  | Slower   | Most accurate of SAM 2.1    |
-| **SAM 3**         | 3.45 GB | Slowest  | Latest generation, new 2025 |
+| Model             | Size    | Speed    | Notes                    |
+| ----------------- | ------- | -------- | ------------------------ |
+| **SAM 2.1 Tiny**  | 74.5 MB | Fastest  |                          |
+| **SAM 2.1 Small** | 88 MB   | Fast     | Default                  |
+| **SAM 2.1 Base**  | 154 MB  | Moderate |                          |
+| **SAM 2.1 Large** | 428 MB  | Slower   | Most accurate of SAM 2.1 |
+| **SAM 3**         | 3.45 GB | Slowest  | Latest generation        |
 
 ![Ultralytics Platform Annotate Sam Model Selector](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/platform/platform-annotate-sam-model-selector.avif)
 

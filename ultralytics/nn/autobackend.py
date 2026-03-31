@@ -110,8 +110,9 @@ class AutoBackend(nn.Module):
             | RKNN                  | *_rknn_model/     |
             | Triton Inference      | triton://model    |
             | ExecuTorch            | *.pte             |
-            | Axelera               | *_axelera_model/  |
+            | Axelera AI            | *_axelera_model/  |
             | LiteRT                | *_litert_model/   |
+
 
     Attributes:
         backend (BaseBackend): The loaded inference backend instance.

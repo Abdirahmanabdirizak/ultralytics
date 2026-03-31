@@ -146,12 +146,12 @@ The storage card shows:
 
 #### Upload Size Limits
 
-| File Type       | Max Size |
-| --------------- | -------- |
-| **Image**       | 50 MB    |
-| **Video**       | 1 GB     |
-| **Model (.pt)** | 1 GB     |
-| **ZIP Archive** | 10 GB    |
+| File Type                                           | Free  | Pro   | Enterprise |
+| --------------------------------------------------- | ----- | ----- | ---------- |
+| **Image**                                           | 50 MB | 50 MB | 50 MB      |
+| **Video**                                           | 1 GB  | 1 GB  | 1 GB       |
+| **Model (.pt)**                                     | 1 GB  | 1 GB  | 1 GB       |
+| **Dataset (ZIP/TAR incl. `.tar.gz`/`.tgz`/NDJSON)** | 10 GB | 20 GB | 50 GB      |
 
 #### Trash and Storage
 
@@ -246,6 +246,17 @@ Owners and admins can manage the team:
 ## Trash Tab
 
 Manage deleted items. See [Trash](trash.md) for full documentation.
+
+## Help & Feedback
+
+The **Help** page is accessible from the sidebar footer. Use it to:
+
+- **Rate your experience** with a 1-5 star rating
+- **Choose a feedback type**: Bug Report, Feature Request, or General
+- **Describe the issue** with a text message
+- **Attach screenshots** for visual context
+
+Feedback is private and sent directly to the Ultralytics team to help prioritize features and fix issues.
 
 ## FAQ
 
