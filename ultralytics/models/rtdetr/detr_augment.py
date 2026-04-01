@@ -457,7 +457,7 @@ def compute_policy_epochs(hyp: IterableSimpleNamespace) -> tuple[int, int, int]:
 
     # DEIM-style policy epochs are derived on the active-augmentation span when no_aug is explicit.
     effective_epochs = stop if explicit_no_aug else epochs
-    start = int(hyp.open_aug_epoch)
+    start = min(4, max(0, effective_epochs - 1))
 
     flat_epoch = hyp.flat_epoch
     if flat_epoch is None:
