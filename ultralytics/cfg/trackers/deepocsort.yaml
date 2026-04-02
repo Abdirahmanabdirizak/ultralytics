@@ -9,7 +9,7 @@ track_low_thresh: 0.1 # (float) Second-stage threshold for low-score matches; us
 new_track_thresh: 0.3 # (float) Start a new track if no match ≥ this; higher reduces false tracks
 track_buffer: 50 # (int) Frames to keep lost tracks alive; increased for better occlusion handling in crowded scenes
 match_thresh: 0.8 # (float) Association similarity threshold (IoU/cost); tune with detector quality
-fuse_score: True # (bool) Fuse detection score with motion/IoU for matching; stabilizes weak detections
+fuse_score: False # (bool) Disabled: strong detector makes score fusion noise
 
 # OC-SORT specifics (inherited)
 delta_t: 3 # (int) Temporal window for velocity direction computation in OCM
