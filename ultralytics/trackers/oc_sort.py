@@ -204,7 +204,7 @@ class OCSORT(BYTETracker):
         return dists
 
     @staticmethod
-    def _biou_distance(tracks, detections, buffer_ratio=0.5):
+    def _biou_distance(tracks, detections, buffer_ratio=0.3):
         """Compute Buffered IoU distance: expand boxes before IoU to handle fast motion.
 
         Each box is expanded by buffer_ratio * sqrt(w*h) in all directions (C-BIoU, BoostTrack).
