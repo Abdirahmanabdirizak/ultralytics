@@ -456,7 +456,7 @@ class BYTETracker:
     def remove_duplicate_stracks(stracksa: list[STrack], stracksb: list[STrack]) -> tuple[list[STrack], list[STrack]]:
         """Remove duplicate stracks from two lists based on Intersection over Union (IoU) distance."""
         pdist = matching.iou_distance(stracksa, stracksb)
-        pairs = np.where(pdist < 0.15)
+        pairs = np.where(pdist < 0.10)
         dupa, dupb = [], []
         for p, q in zip(*pairs):
             timep = stracksa[p].frame_id - stracksa[p].start_frame
