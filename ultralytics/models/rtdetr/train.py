@@ -228,7 +228,7 @@ class RTDETRTrainer(DetectionTrainer):
                         sta_excluded += 1
 
                 is_norm_like_param = (
-                    isinstance(module, bn) or module.__class__.__name__ == "DEIMRMSNorm" or "logit_scale" in fullname
+                    isinstance(module, bn) or "logit_scale" in fullname
                 )
 
                 if is_backbone:
