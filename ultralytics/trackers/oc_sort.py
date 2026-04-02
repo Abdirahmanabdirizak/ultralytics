@@ -194,12 +194,8 @@ class OCSORT(BYTETracker):
         return [OCSortTrack(xywh, s, c, self.delta_t) for (xywh, s, c) in zip(bboxes, results.conf, results.cls)]
 
     def get_dists(self, tracks, detections):
-        """Compute cost matrix with Soft-BIoU (weighted BIoU+IoU), and OCM velocity cost."""
-        # Soft-BIoU: blend standard IoU and Buffered IoU for precision + fast-motion coverage
-        iou_dists = matching.iou_distance(tracks, detections)
-        biou_dists = self._biou_distance(tracks, detections)
-        dists = 0.5 * iou_dists + 0.5 * biou_dists
-
+        """Compute cost matrix with Buffered IoU distance and OCM velocity direction consistency cost."""
+        dists = self._biou_distance(tracks, detections)
         if self.args.fuse_score:
             dists = matching.fuse_score(dists, detections)
 
