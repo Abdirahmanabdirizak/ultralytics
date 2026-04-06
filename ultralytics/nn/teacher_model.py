@@ -5,7 +5,7 @@
 Teacher abstraction inspired by:
 - EUPE/UNIC/DUNE: forward_features() -> {"x_norm_clstoken", "x_norm_patchtokens"} dict convention
 - RADIO (NVlabs/RADIO, adaptor_base.py): typed AdaptorInput/RadioOutput NamedTuples for error catching
-- DUNE (naver/dune, teachers/config.py): per-teacher token_types -- SAM/MASt3R/ConvNeXt produce patches only
+- DUNE (naver/dune, teachers/config.py): per-teacher token_types -- SAM3 produces patches only
 - MobileCLIP (ultralytics/nn/image_model.py): TorchScript .ts pattern for zero-dependency inference
 """
 
@@ -30,9 +30,8 @@ class TeacherOutput:
     (RADIO/radio/adaptor_base.py) to catch mismatches at construction, not key lookup.
 
     Attributes:
-        cls (torch.Tensor | None): CLS/summary features (B, D). None for patches-only teachers (SAM3, ConvNeXt) where
-            CLS is not meaningful -- following DUNE convention where
-        MASt3R and MultiHMR use token_types=["patch"] (dune/teachers/config.py: 25,36).
+        cls (torch.Tensor | None): CLS/summary features (B, D). None for patches-only teachers (SAM3) where
+        CLS is not meaningful -- following DUNE convention (dune/teachers/config.py: 25,36).
         patches (torch.Tensor): Spatial/patch features (B, N, D). Always present.
     """
 
@@ -105,8 +104,7 @@ class EUPETeacher(TeacherModel):
     {256, 384, 512}. The released models are Stage 2/3 students.
 
     Supports ViT (vitb16, vits16) and ConvNeXt (convnextb) variants. ConvNeXt produces CLS via global average pooling
-    (verified: eupe/models/convnext.py:220, x_pool = x.mean([-2, -1])), which the EUPE paper Table 6 notes as "no cls"
-    -- we mark ConvNeXt as patches-only for loss computation.
+    (verified: eupe/models/convnext.py:220, x_pool = x.mean([-2, -1])).
 
     Attributes:
         model: The EUPE backbone (DinoVisionTransformer or ConvNeXt).
@@ -120,6 +118,7 @@ class EUPETeacher(TeacherModel):
             "hf_file": "EUPE-ViT-B.pt",
             "embed_dim": 768,
             "num_patches": 256,  # 16x16 grid at 256x256, patch_size=16
+            "imgsz": 256,
             "token_types": ("cls", "patches"),
         },
         "vits16": {
@@ -128,6 +127,7 @@ class EUPETeacher(TeacherModel):
             "hf_file": "EUPE-ViT-S.pt",
             "embed_dim": 384,
             "num_patches": 256,
+            "imgsz": 256,
             "token_types": ("cls", "patches"),
         },
         "convnextb": {
@@ -136,8 +136,9 @@ class EUPETeacher(TeacherModel):
             "hf_file": "EUPE-ConvNeXt-B.pt",
             "embed_dim": 1024,
             "num_patches": 64,  # 8x8 grid at 256x256 with 32x downsample
-            # ConvNeXt CLS is synthetic (GAP), EUPE Table 6 notes "no cls" -- skip CLS loss
-            "token_types": ("patches",),
+            "imgsz": 256,
+            # ConvNeXt CLS is global avg pool (eupe/models/convnext.py:220: x_pool = x.mean([-2, -1]))
+            "token_types": ("cls", "patches"),
         },
     }
 
@@ -169,7 +170,7 @@ class EUPETeacher(TeacherModel):
             image (torch.Tensor): Preprocessed image tensor (B, 3, H, W).
 
         Returns:
-            (TeacherOutput): CLS (None for ConvNeXt) and patch features.
+            (TeacherOutput): CLS and patch features.
         """
         out = self.model.forward_features(image)
         cls = out["x_norm_clstoken"] if "cls" in self.token_types else None
@@ -183,7 +184,7 @@ class DINOv3Teacher(TeacherModel):
     tokens; we extract CLS and patches, skipping registers.
 
     ConvNeXt variants use the same architecture as EUPE ConvNeXt (DINOv3 trains them with DINO/iBOT self-distillation).
-    ConvNeXt has no true CLS token -- marked patches-only.
+    ConvNeXt CLS is token 0 in last_hidden_state (global average pooled).
 
     Attributes:
         model: The DINOv3 backbone from HuggingFace transformers.
@@ -194,6 +195,7 @@ class DINOv3Teacher(TeacherModel):
             "hf_model": "facebook/dinov3-vitb16-pretrain-lvd1689m",
             "embed_dim": 768,
             "num_patches": 196,  # 14x14 at 224x224, patch_size=16
+            "imgsz": 224,
             "n_registers": 4,
             "token_types": ("cls", "patches"),
         },
@@ -201,6 +203,7 @@ class DINOv3Teacher(TeacherModel):
             "hf_model": "facebook/dinov3-vitl16-pretrain-lvd1689m",
             "embed_dim": 1024,
             "num_patches": 196,
+            "imgsz": 224,
             "n_registers": 4,
             "token_types": ("cls", "patches"),
         },
@@ -208,13 +211,16 @@ class DINOv3Teacher(TeacherModel):
             "hf_model": "facebook/dinov3-convnext-base-pretrain-lvd1689m",
             "embed_dim": 1024,
             "num_patches": 49,  # 7x7 at 224x224 with 32x downsample
+            "imgsz": 224,
             "n_registers": 0,
-            "token_types": ("patches",),
+            # CLS is token 0 in last_hidden_state (verified: shape [1, 50, 1024] = 1 CLS + 49 patches)
+            "token_types": ("cls", "patches"),
         },
         "vit7b": {
             "hf_model": "facebook/dinov3-vit7b16-pretrain-lvd1689m",
             "embed_dim": 4096,
             "num_patches": 196,
+            "imgsz": 224,
             "n_registers": 4,
             "token_types": ("cls", "patches"),
         },
@@ -274,6 +280,7 @@ class SigLIP2Teacher(TeacherModel):
             "hf_model": "google/siglip2-giant-opt-patch16-384",
             "embed_dim": 1536,
             "num_patches": 576,  # (384/16)^2
+            "imgsz": 384,
             "token_types": ("cls", "patches"),
         },
     }
@@ -397,8 +404,8 @@ class TorchScriptTeacher(TeacherModel):
     DINOv3, etc.) during training, following the MobileCLIP pattern in ultralytics/nn/image_model.py (MobileCLIPImageTS
     loads .ts via torch.jit.load).
 
-    For patches-only teachers (SAM3, ConvNeXt), the .ts returns (zeros, patches) and token_types is set to ("patches",)
-    so the loss function skips the CLS component.
+    For patches-only teachers (SAM3), the .ts returns (zeros, patches) and token_types is set to ("patches",) so the
+    loss function skips the CLS component.
 
     Attributes:
         model (torch.jit.ScriptModule): Traced teacher model.
@@ -449,9 +456,16 @@ for _prefix, _cls in [("eupe", EUPETeacher), ("dinov3", DINOv3Teacher), ("siglip
             "cls": _cls,
             "embed_dim": _cfg["embed_dim"],
             "num_patches": _cfg["num_patches"],
+            "imgsz": _cfg["imgsz"],
             "token_types": _cfg["token_types"],
         }
-TEACHER_REGISTRY["sam3:l"] = {"cls": SAM3Teacher, "embed_dim": 1024, "num_patches": 0, "token_types": ("patches",)}
+TEACHER_REGISTRY["sam3:l"] = {
+    "cls": SAM3Teacher,
+    "embed_dim": 1024,
+    "num_patches": 0,
+    "imgsz": 1024,
+    "token_types": ("patches",),
+}
 
 
 def build_teacher_model(variant: str, device: torch.device = None) -> TeacherModel:
