@@ -233,7 +233,7 @@ class ImageEncoderTrainer(ClassificationTrainer):
             return (
                 wds.WebDataset(shards, shardshuffle=mode == "train")
                 .shuffle(1000 if mode == "train" else 0)
-                .decode("pil")
+                .decode("pil", handler=wds.warn_and_continue)
                 .to_tuple("jpg", handler=wds.warn_and_continue)
                 .map(lambda sample: tf(sample[0]))
                 .with_epoch(len(shards) * 10000)
