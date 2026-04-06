@@ -253,8 +253,8 @@ class ImageEncoderTrainer(ClassificationTrainer):
             (DataLoader): DataLoader yielding (student_imgs, teacher_imgs) batches.
         """
         dataset = self.build_dataset(dataset_path, mode)
-        if not isinstance(dataset, Dataset):
-            # WebDataset pipeline (not a map-style Dataset) -- wrap for DataLoader compatibility
+        if isinstance(dataset, torch.utils.data.IterableDataset):
+            # WebDataset pipeline -- wrap for DataLoader compatibility
             num_samples = 0
             for f in sorted(Path(dataset_path).glob("shards/*_stats.json")):
                 with open(f) as fh:
