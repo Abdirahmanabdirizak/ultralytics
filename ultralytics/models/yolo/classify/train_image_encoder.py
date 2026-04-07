@@ -279,11 +279,19 @@ class ImageEncoderTrainer(ClassificationTrainer):
             if not num_samples:
                 num_samples = len(list(Path(dataset_path).glob("shards/*.tar"))) * 6000
                 LOGGER.warning(f"No stats files found, estimating {num_samples} samples from shard count")
-            return _WebDatasetLoader(dataset, num_samples, batch_size, self.args.workers, drop_last=mode == "train")
+            # In DDP, split_by_node partitions shards across ranks -- divide samples accordingly
+            world_size = torch.distributed.get_world_size() if RANK != -1 else 1
+            return _WebDatasetLoader(
+                dataset, num_samples // world_size, batch_size, self.args.workers, drop_last=mode == "train"
+            )
+        sampler = (
+            torch.utils.data.distributed.DistributedSampler(dataset, shuffle=mode == "train") if RANK != -1 else None
+        )
         return DataLoader(
             dataset,
             batch_size=batch_size,
-            shuffle=mode == "train",
+            shuffle=sampler is None and mode == "train",
+            sampler=sampler,
             num_workers=self.args.workers,
             pin_memory=True,
             drop_last=mode == "train",
