@@ -1,8 +1,27 @@
 import torch
 import argparse
 from ultralytics import RTDETR, YOLO
-from ultralytics import RTDETRDEIM, RTDETRDEIMv2
 import yaml
+
+MODEL_CLASSES = {
+    'RTDETR': RTDETR,
+}
+
+try:
+    from ultralytics import RTDETRDEIM
+except ImportError:
+    RTDETRDEIM = None
+else:
+    MODEL_CLASSES['RTDETRDEIM'] = RTDETRDEIM
+
+try:
+    from ultralytics import RTDETRDEIMv2
+except ImportError:
+    RTDETRDEIMv2 = None
+else:
+    MODEL_CLASSES['RTDETRDEIMv2'] = RTDETRDEIMv2
+
+MODEL_CLASSES['YOLO'] = YOLO
 
 
 def parse_args():
@@ -22,8 +41,8 @@ def parse_args():
         '--model-class',
         type=str,
         default='RTDETR',
-        choices=['RTDETR', 'RTDETRDEIM', 'RTDETRDEIMv2', 'YOLO'],
-        help='Model wrapper class to use'
+        choices=list(MODEL_CLASSES),
+        help=f"Model wrapper class to use. Available in this checkout: {', '.join(MODEL_CLASSES)}"
     )
     parser.add_argument(
         '--config',
@@ -73,13 +92,7 @@ def main():
             print(f"GPU {i}: {torch.cuda.get_device_name(i)}")
 
     # Load model with requested wrapper class
-    model_classes = {
-        'RTDETR': RTDETR,
-        'RTDETRDEIM': RTDETRDEIM,
-        'RTDETRDEIMv2': RTDETRDEIMv2,
-        'YOLO': YOLO,
-    }
-    model = model_classes[args.model_class](args.model)
+    model = MODEL_CLASSES[args.model_class](args.model)
 
     for name, param in model.model.named_parameters():
         if not param.requires_grad:
