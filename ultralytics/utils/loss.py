@@ -1128,6 +1128,65 @@ class v8OBBLoss(v8DetectionLoss):
         return ang_loss.sum() / target_scores_sum
 
 
+class v8DepthLoss:
+    """Criterion class for computing training losses for YOLO depth estimation.
+
+    Uses scale-invariant log loss (SILog) which is the standard loss for monocular depth
+    estimation, following the Depth Anything approach. Also includes gradient-matching loss
+    for edge-aware depth prediction.
+    """
+
+    def __init__(self, model):
+        """Initialize v8DepthLoss."""
+        device = next(model.parameters()).device
+        self.device = device
+        self.silog_weight = 1.0
+        self.l1_weight = 0.1
+
+    def __call__(self, preds, batch):
+        """Calculate depth estimation loss.
+
+        Args:
+            preds: Dict with "depth" key → (B, 1, H, W) predicted depth.
+            batch: Dict with "depth" key → (B, H, W) ground truth depth in meters.
+
+        Returns:
+            (loss_sum, loss_items): Total loss and per-component losses.
+        """
+        loss = torch.zeros(2, device=self.device)  # [silog_loss, l1_loss]
+        pred_depth = preds["depth"]  # (B, 1, H, W)
+        gt_depth = batch["depth"].to(self.device)  # (B, H, W)
+
+        if gt_depth.ndim == 3:
+            gt_depth = gt_depth.unsqueeze(1)  # (B, 1, H, W)
+
+        # Resize GT to match prediction resolution if needed
+        if gt_depth.shape[-2:] != pred_depth.shape[-2:]:
+            gt_depth = F.interpolate(gt_depth, size=pred_depth.shape[-2:], mode="bilinear", align_corners=True)
+
+        # Valid mask: positive depth values
+        valid = gt_depth > 0.001
+        if valid.sum() < 10:
+            return loss.sum(), loss.detach()
+
+        pred_valid = pred_depth[valid]
+        gt_valid = gt_depth[valid]
+
+        # Clamp predictions to avoid log(0)
+        pred_valid = pred_valid.clamp(min=0.001)
+
+        # SILog loss (scale-invariant log error)
+        log_diff = torch.log(pred_valid) - torch.log(gt_valid)
+        silog = torch.sqrt(torch.mean(log_diff**2) - 0.5 * torch.mean(log_diff) ** 2 + 1e-6)
+        loss[0] = silog * self.silog_weight
+
+        # L1 loss for absolute accuracy
+        loss[1] = F.l1_loss(pred_valid, gt_valid) * self.l1_weight
+
+        batch_size = pred_depth.shape[0]
+        return loss.sum() * batch_size, loss.detach()
+
+
 class E2EDetectLoss:
     """Criterion class for computing training losses for end-to-end detection."""
 

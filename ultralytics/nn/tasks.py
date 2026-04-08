@@ -44,6 +44,7 @@ from ultralytics.nn.modules import (
     Conv,
     Conv2,
     ConvTranspose,
+    Depth,
     Detect,
     DWConv,
     DWConvTranspose2d,
@@ -79,6 +80,7 @@ from ultralytics.utils.loss import (
     E2ELoss,
     PoseLoss26,
     v8ClassificationLoss,
+    v8DepthLoss,
     v8DetectionLoss,
     v8OBBLoss,
     v8PoseLoss,
@@ -617,6 +619,26 @@ class PoseModel(DetectionModel):
     def init_criterion(self):
         """Initialize the loss criterion for the PoseModel."""
         return E2ELoss(self, PoseLoss26) if getattr(self, "end2end", False) else v8PoseLoss(self)
+
+
+class DepthModel(DetectionModel):
+    """YOLO depth estimation model.
+
+    This class extends DetectionModel for monocular depth estimation, using YOLO backbone + FPN with a
+    DPT-style dense depth decoder head. Follows the Depth Anything approach adapted to YOLO architecture.
+
+    Examples:
+        >>> model = DepthModel("yolo26n-depth.yaml", ch=3)
+        >>> results = model(image_tensor)
+    """
+
+    def __init__(self, cfg="yolo26n-depth.yaml", ch=3, nc=None, verbose=True):
+        """Initialize YOLO Depth model."""
+        super().__init__(cfg=cfg, ch=ch, nc=nc, verbose=verbose)
+
+    def init_criterion(self):
+        """Initialize the depth loss criterion."""
+        return v8DepthLoss(self)
 
 
 class ClassificationModel(BaseModel):
@@ -1698,6 +1720,8 @@ def parse_model(d, ch, verbose=True):
                 args[2] = make_divisible(min(args[2], max_channels) * width, 8)
             if m in {Detect, YOLOEDetect, Segment, Segment26, YOLOESegment, YOLOESegment26, Pose, Pose26, OBB, OBB26}:
                 m.legacy = legacy
+        elif m is Depth:
+            args.append([ch[x] for x in f])  # ch tuple
         elif m is v10Detect:
             args.append([ch[x] for x in f])
         elif m is ImagePoolingAttn:
@@ -1792,6 +1816,8 @@ def guess_model_task(model):
             return "pose"
         if "obb" in m:
             return "obb"
+        if "depth" in m:
+            return "depth"
 
     # Guess from model cfg
     if isinstance(model, dict):
@@ -1814,6 +1840,8 @@ def guess_model_task(model):
                 return "pose"
             elif isinstance(m, OBB):
                 return "obb"
+            elif isinstance(m, Depth):
+                return "depth"
             elif isinstance(m, (Detect, WorldDetect, YOLOEDetect, v10Detect)):
                 return "detect"
 
@@ -1828,6 +1856,8 @@ def guess_model_task(model):
             return "pose"
         elif "-obb" in model.stem or "obb" in model.parts:
             return "obb"
+        elif "-depth" in model.stem or "depth" in model.parts:
+            return "depth"
         elif "detect" in model.parts:
             return "detect"
 

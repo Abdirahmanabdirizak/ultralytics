@@ -20,7 +20,7 @@ from .conv import Conv, DWConv
 from .transformer import MLP, DeformableTransformerDecoder, DeformableTransformerDecoderLayer
 from .utils import bias_init_with_prob, linear_init
 
-__all__ = "OBB", "Classify", "Detect", "Pose", "RTDETRDecoder", "Segment", "YOLOEDetect", "YOLOESegment", "v10Detect"
+__all__ = "Depth", "OBB", "Classify", "Detect", "Pose", "RTDETRDecoder", "Segment", "YOLOEDetect", "YOLOESegment", "v10Detect"
 
 
 class Detect(nn.Module):
@@ -767,6 +767,79 @@ class Pose26(Pose):
             y[:, 0::ndim] = (y[:, 0::ndim] + self.anchors[0]) * self.strides
             y[:, 1::ndim] = (y[:, 1::ndim] + self.anchors[1]) * self.strides
             return y
+
+
+class Depth(nn.Module):
+    """YOLO Depth head for monocular depth estimation.
+
+    A dense prediction head that takes multi-scale backbone features and produces
+    a single-channel depth map via progressive upsampling and fusion.
+
+    Attributes:
+        ch (tuple): Channel sizes from backbone feature maps (P3, P4, P5).
+        c_mid (int): Internal feature channels.
+
+    Examples:
+        >>> depth = Depth(ch=(256, 512, 1024))
+        >>> x = [torch.randn(1, 256, 80, 80), torch.randn(1, 512, 40, 40), torch.randn(1, 1024, 20, 20)]
+        >>> out = depth(x)  # (1, 1, 160, 160) if training
+    """
+
+    def __init__(self, ch: tuple = (), c_mid: int = 256):
+        """Initialize Depth head.
+
+        Args:
+            ch: Tuple of input channel sizes from backbone feature maps (P3, P4, P5).
+            c_mid: Number of intermediate channels for the fusion decoder.
+        """
+        super().__init__()
+        self.nl = len(ch)  # number of detection layers (pyramid levels)
+
+        # Project each pyramid level to c_mid channels
+        self.proj = nn.ModuleList(Conv(c, c_mid, k=1) for c in ch)
+
+        # Refinement blocks after fusion at each level
+        self.refine = nn.ModuleList(
+            nn.Sequential(Conv(c_mid, c_mid, k=3), Conv(c_mid, c_mid, k=3)) for _ in ch
+        )
+
+        # Output head: features → 1-channel depth
+        self.head = nn.Sequential(
+            Conv(c_mid, c_mid // 2, k=3),
+            nn.ConvTranspose2d(c_mid // 2, c_mid // 2, kernel_size=2, stride=2, bias=True),
+            Conv(c_mid // 2, c_mid // 4, k=3),
+            nn.Conv2d(c_mid // 4, 1, kernel_size=1),
+            nn.Sigmoid(),
+        )
+
+        self.max_depth = 10.0  # default max depth in meters (NYU indoor)
+
+    def forward(self, x: list[torch.Tensor]) -> dict[str, torch.Tensor] | torch.Tensor:
+        """Fuse multi-scale features and predict depth.
+
+        Args:
+            x: List of feature tensors [P3, P4, P5] from the backbone/neck.
+
+        Returns:
+            During training: dict with "depth" key containing (B, 1, H, W) depth map.
+            During inference: (B, 1, H, W) depth map scaled by max_depth.
+        """
+        # Project all levels to same channel dim
+        feats = [self.proj[i](x[i]) for i in range(self.nl)]
+
+        # Bottom-up fusion: start from coarsest (P5), upsample and add finer levels
+        out = feats[-1]
+        for i in range(self.nl - 2, -1, -1):
+            out = F.interpolate(out, size=feats[i].shape[2:], mode="bilinear", align_corners=True)
+            out = out + feats[i]
+            out = self.refine[i](out)
+
+        # Depth output (at P3 resolution → upsample 2x in head → P2 resolution = input/4)
+        depth = self.head(out) * self.max_depth  # (B, 1, H/4, W/4) in meters
+
+        if self.training:
+            return {"depth": depth}
+        return depth
 
 
 class Classify(nn.Module):
