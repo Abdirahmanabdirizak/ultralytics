@@ -176,6 +176,24 @@ def align_least_squares(pred: np.ndarray, gt: np.ndarray, mask: np.ndarray) -> n
     return s * pred + t
 
 
+def align_least_squares_log(pred: np.ndarray, gt: np.ndarray, mask: np.ndarray) -> np.ndarray:
+    """Align prediction to ground truth via least-squares in log space.
+
+    Solves: min ||s * log(pred) + t - log(gt)||^2, then returns exp(s*log(pred)+t).
+    This is the correct alignment for models outputting inverse depth, since
+    log(1/depth) = -log(depth) and a linear fit in log space naturally handles
+    the nonlinear relationship between inverse depth and forward depth.
+    """
+    lp = np.log(np.clip(pred[mask], 1e-8, None)).flatten()
+    lg = np.log(gt[mask]).flatten()
+
+    A = np.stack([lp, np.ones_like(lp)], axis=1)
+    result = np.linalg.lstsq(A, lg, rcond=None)
+    s, t = result[0]
+
+    return np.exp(s * np.log(np.clip(pred, 1e-8, None)) + t)
+
+
 def align_median(pred: np.ndarray, gt: np.ndarray, mask: np.ndarray) -> np.ndarray:
     """Align prediction to ground truth via median scaling."""
     scale = np.median(gt[mask]) / (np.median(pred[mask]) + 1e-8)
@@ -265,8 +283,9 @@ def main():
     parser.add_argument("--imgsz", type=int, default=518, help="Input size for model")
     parser.add_argument("--batch-size", type=int, default=4, help="Batch size")
     parser.add_argument("--device", type=str, default="0", help="CUDA device")
-    parser.add_argument("--align", type=str, default="least_squares",
-                        choices=["least_squares", "median"], help="Alignment method")
+    parser.add_argument("--align", type=str, default="least_squares_log",
+                        choices=["least_squares", "least_squares_log", "median", "none"],
+                        help="Alignment method (least_squares_log recommended for relative models)")
     parser.add_argument("--half", action="store_true", help="Use FP16")
     args = parser.parse_args()
 
@@ -318,6 +337,11 @@ def main():
         # Align prediction to ground truth
         if args.align == "least_squares":
             pred_aligned = align_least_squares(pred_crop, gt_crop, mask)
+        elif args.align == "least_squares_log":
+            mask_pos = mask & (pred_crop > 1e-6)
+            pred_aligned = align_least_squares_log(pred_crop, gt_crop, mask_pos)
+        elif args.align == "none":
+            pred_aligned = pred_crop
         else:
             pred_aligned = align_median(pred_crop, gt_crop, mask)
 
