@@ -1016,10 +1016,11 @@ def plot_tune_results(
 
     # Fitness vs iteration
     for i, k in enumerate(fitness_keys):
-        x = range(1, len(fitness) + 1)
+        fitness = x[:, i]
+        xx = range(1, len(fitness) + 1)
         plt.figure(figsize=(10, 6), tight_layout=True)
-        plt.plot(x, fitness, marker="o", linestyle="none", label=k)
-        plt.plot(x, gaussian_filter1d(fitness, sigma=3), ":", label="smoothed", linewidth=2)  # smoothing line
+        plt.plot(xx, fitness, marker="o", linestyle="none", label=k)
+        plt.plot(xx, gaussian_filter1d(fitness, sigma=3), ":", label="smoothed", linewidth=2)  # smoothing line
         plt.title("Fitness vs Iteration")
         plt.xlabel("Iteration")
         plt.ylabel("Fitness")
