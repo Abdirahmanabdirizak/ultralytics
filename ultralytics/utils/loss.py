@@ -1131,9 +1131,9 @@ class v8OBBLoss(v8DetectionLoss):
 class v8DepthLoss:
     """Criterion class for computing training losses for YOLO depth estimation.
 
-    Uses scale-invariant log loss (SILog) which is the standard loss for monocular depth
-    estimation, following the Depth Anything approach. Also includes gradient-matching loss
-    for edge-aware depth prediction.
+    Uses scale-invariant log loss (SILog) + gradient-matching loss, following the
+    Depth Anything approach. SILog handles scale ambiguity while gradient loss
+    preserves edges.
     """
 
     def __init__(self, model):
@@ -1141,7 +1141,7 @@ class v8DepthLoss:
         device = next(model.parameters()).device
         self.device = device
         self.silog_weight = 1.0
-        self.l1_weight = 0.1
+        self.grad_weight = 0.5
 
     def __call__(self, preds, batch):
         """Calculate depth estimation loss.
@@ -1153,7 +1153,7 @@ class v8DepthLoss:
         Returns:
             (loss_sum, loss_items): Total loss and per-component losses.
         """
-        loss = torch.zeros(2, device=self.device)  # [silog_loss, l1_loss]
+        loss = torch.zeros(2, device=self.device)  # [silog_loss, grad_loss]
         # Handle both training (dict) and validation (tensor) prediction formats
         if isinstance(preds, dict):
             pred_depth = preds["depth"]
@@ -1186,8 +1186,17 @@ class v8DepthLoss:
         silog = torch.sqrt(torch.mean(log_diff**2) - 0.5 * torch.mean(log_diff) ** 2 + 1e-6)
         loss[0] = silog * self.silog_weight
 
-        # L1 loss for absolute accuracy
-        loss[1] = F.l1_loss(pred_valid, gt_valid) * self.l1_weight
+        # Gradient-matching loss (edge-aware): penalize differences in spatial gradients
+        pred_log = torch.log(pred_depth.clamp(min=0.001))
+        gt_log = torch.log(gt_depth.clamp(min=0.001))
+        valid_f = valid.float()
+        # Horizontal and vertical gradients
+        pred_dx = (pred_log[:, :, :, 1:] - pred_log[:, :, :, :-1]) * valid_f[:, :, :, 1:] * valid_f[:, :, :, :-1]
+        gt_dx = (gt_log[:, :, :, 1:] - gt_log[:, :, :, :-1]) * valid_f[:, :, :, 1:] * valid_f[:, :, :, :-1]
+        pred_dy = (pred_log[:, :, 1:, :] - pred_log[:, :, :-1, :]) * valid_f[:, :, 1:, :] * valid_f[:, :, :-1, :]
+        gt_dy = (gt_log[:, :, 1:, :] - gt_log[:, :, :-1, :]) * valid_f[:, :, 1:, :] * valid_f[:, :, :-1, :]
+        grad_loss = F.l1_loss(pred_dx, gt_dx) + F.l1_loss(pred_dy, gt_dy)
+        loss[1] = grad_loss * self.grad_weight
 
         batch_size = pred_depth.shape[0]
         return loss.sum() * batch_size, loss.detach()
