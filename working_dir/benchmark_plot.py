@@ -284,6 +284,14 @@ BENCHMARKS = {
                 ("l", 8.07, {"ap": 57.3, "ap50": 74.9, "ap75": 62.3, "ap_small": 40.6, "ap_medium": 61.5, "ap_large": 73.7}),
                 ("x", 12.89, {"ap": 59.3, "ap50": 76.8, "ap75": 64.6, "ap_small": 42.3, "ap_medium": 64.2, "ap_large": 76.4}),
             ],
+            "RT-DETR": [
+                # RT-DETR v1 paper Table 2 (arXiv 2304.08069): COCO-only training
+                # Sub-metrics from HuggingFace model card (PekingU/rtdetr_*)
+                # Latency from main table FPS: R18=217→4.61ms, R50=108→9.26ms, R101=74→13.51ms
+                ("s", 4.61, {"ap": 46.5, "ap50": 63.8, "ap75": 50.4, "ap_small": 28.4, "ap_medium": 49.8, "ap_large": 63.0}),
+                ("l", 9.26, {"ap": 53.1, "ap50": 71.3, "ap75": 57.7, "ap_small": 34.8, "ap_medium": 58.0, "ap_large": 70.0}),
+                ("x", 13.51, {"ap": 54.3, "ap50": 72.7, "ap75": 58.6, "ap_small": 36.0, "ap_medium": 58.8, "ap_large": 72.1}),
+            ],
             "RT-DETR (obj365)": [
                 # RT-DETR v1 paper Table C (arXiv 2304.08069): obj365 pretrain → COCO finetune
                 # Latency from main table FPS: R18=217→4.61ms, R50=108→9.26ms, R101=74→13.51ms
@@ -436,6 +444,7 @@ MODEL_STYLES = {
     "RT-DETRv2 (paper)": ("v", -12),
     "D-FINE": ("D", -12),
     "D-FINE (obj365)": ("D", 8),
+    "RT-DETR": ("v", -12),
     "RT-DETR (obj365)": ("v", 8),
     "DEIMv2 (Ultralytics)": ("p", 8),
     "DEIMv2 (Ultralytics, obj365)": ("p", -12),
