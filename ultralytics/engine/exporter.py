@@ -168,6 +168,7 @@ def export_formats():
         ["RKNN", "rknn", "_rknn_model", False, False, ["batch", "name"]],
         ["ExecuTorch", "executorch", "_executorch_model", True, False, ["batch"]],
         ["Axelera AI", "axelera", "_axelera_model", False, False, ["batch", "int8", "fraction", "data"]],
+        ["Ethos", "ethos", "_ethos_model", False, False, ["data", "int8"]],
     ]
     return dict(zip(["Format", "Argument", "Suffix", "CPU", "GPU", "Arguments"], zip(*x)))
 
@@ -1033,6 +1034,14 @@ class Exporter:
         from ultralytics.utils.export.executorch import torch2executorch
 
         return torch2executorch(self.model, self.file, self.im, metadata=self.metadata, prefix=prefix)
+
+    @try_export
+    def export_ethos(self, prefix=colorstr("Ethos:")):
+        """Export YOLO model to Arm Ethos-U NPU ExecuTorch *.pte format."""
+        assert TORCH_2_9, f"ExecuTorch requires torch>=2.9.0 but torch=={TORCH_VERSION} is installed"
+        from ultralytics.utils.export.ethos import torch2ethos
+
+        return torch2ethos(self.model, self.file, self.im, metadata=self.metadata, prefix=prefix)
 
     @try_export
     def export_edgetpu(self, tflite_model="", prefix=colorstr("Edge TPU:")):

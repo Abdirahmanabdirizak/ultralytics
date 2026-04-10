@@ -832,6 +832,7 @@ nav:
               - axelera: reference/utils/export/axelera.md
               - coreml: reference/utils/export/coreml.md
               - engine: reference/utils/export/engine.md
+              - ethos: reference/utils/export/ethos.md
               - executorch: reference/utils/export/executorch.md
               - imx: reference/utils/export/imx.md
               - mnn: reference/utils/export/mnn.md
