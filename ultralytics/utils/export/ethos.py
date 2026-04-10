@@ -7,7 +7,7 @@ from pathlib import Path
 import torch
 
 from ultralytics.utils import LOGGER, YAML
-from ultralytics.utils.checks import check_requirements
+from ultralytics.utils.checks import check_requirements, check_executorch_requirements
 
 
 def torch2ethos(
