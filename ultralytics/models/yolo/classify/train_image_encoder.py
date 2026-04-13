@@ -172,23 +172,37 @@ class ImageEncoderTrainer(ClassificationTrainer):
             else:
                 LOGGER.warning(f"kNN eval skipped: {knn_path} not found")
 
+    @staticmethod
+    def _resolve_paths(data_path):
+        """Resolve a single data path to train/val paths based on directory layout."""
+        p = Path(data_path)
+        if (p / "shards").is_dir():
+            return str(p), str(p)
+        if (p / "images" / "train2017").is_dir():
+            return str(p / "images" / "train2017"), str(p / "images" / "val2017")
+        if (p / "train").is_dir():
+            return str(p / "train"), str(p / "val")
+        return str(p), str(p)
+
     def get_dataset(self):
         """Build minimal data dict for distillation (no check_cls_dataset needed).
 
-        Auto-detect layout: shards/*.tar (WebDataset), images/train2017 (COCO), train/ (ImageNet), or flat folder.
+        Auto-detect layout per path: shards/*.tar (WebDataset), images/train2017 (COCO), train/ (ImageNet), or flat.
+        Supports comma-separated paths for combining ImageFolder datasets (no WebDataset mixing).
 
         Returns:
             (dict): Data dict with 'train', 'val', 'nc', 'names', 'channels' keys.
         """
-        data_path = Path(self.args.data)
-        if (data_path / "shards").is_dir():
-            train_path = val_path = str(data_path)
-        elif (data_path / "images" / "train2017").is_dir():
-            train_path, val_path = str(data_path / "images" / "train2017"), str(data_path / "images" / "val2017")
-        elif (data_path / "train").is_dir():
-            train_path, val_path = str(data_path / "train"), str(data_path / "val")
+        paths = [p.strip() for p in str(self.args.data).split(",")]
+        if len(paths) == 1:
+            train_path, val_path = self._resolve_paths(paths[0])
         else:
-            train_path = val_path = str(data_path)
+            train_paths, val_paths = [], []
+            for p in paths:
+                t, v = self._resolve_paths(p)
+                train_paths.append(t)
+                val_paths.append(v)
+            train_path, val_path = train_paths, val_paths
         return {
             "train": train_path,
             "val": val_path,
@@ -218,6 +232,11 @@ class ImageEncoderTrainer(ClassificationTrainer):
                 "num_patches": reg["num_patches"],
                 "token_types": reg["token_types"],
             }
+        loss_cfg = {}
+        for k in ("cos_weight", "l1_weight", "cls_l1"):
+            v = getattr(self.args, k, None)
+            if v is not None:
+                loss_cfg[k] = v
         model = ImageEncoderModel(
             cfg,
             nc=self.data["nc"],
@@ -225,6 +244,7 @@ class ImageEncoderTrainer(ClassificationTrainer):
             verbose=verbose and RANK == -1,
             teachers=teachers_cfg,
             proj_hidden_dim=getattr(self.args, "proj_hidden_dim", None),
+            loss_cfg=loss_cfg or None,
         )
         if weights:
             model.load(weights)
@@ -270,19 +290,22 @@ class ImageEncoderTrainer(ClassificationTrainer):
             )
         return classify_transforms(size=sz, mean=IMAGENET_MEAN, std=IMAGENET_STD, interpolation="BICUBIC")
 
-    def build_dataset(self, img_path: str, mode: str = "train", batch=None):
-        """Build dataset from WebDataset shards or image folder.
+    def build_dataset(self, img_path, mode: str = "train", batch=None):
+        """Build dataset from WebDataset shards, image folder, or list of image folders.
 
         Args:
-            img_path (str): Path to dataset (shards dir or image folder).
+            img_path (str | list[str]): Path(s) to dataset. List triggers ConcatDataset for multi-dataset.
             mode (str, optional): Dataset mode.
             batch (Any, optional): Unused.
 
         Returns:
-            Dataset yielding (student_tensor, teacher_tensor) tuples.
+            Dataset yielding transformed image tensors.
         """
         tf = self._build_transforms(mode)
-
+        if isinstance(img_path, list):
+            datasets = [_ImageOnlyDataset(p, tf) for p in img_path]
+            LOGGER.info(f"Combined dataset: {' + '.join(f'{p}({len(d)})' for p, d in zip(img_path, datasets))}")
+            return torch.utils.data.ConcatDataset(datasets)
         shards = sorted(str(p) for p in Path(img_path).glob("shards/*.tar"))
         if shards:
             import webdataset as wds
