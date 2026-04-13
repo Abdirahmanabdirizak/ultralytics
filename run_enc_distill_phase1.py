@@ -9,7 +9,6 @@ import torch
 from callbacks import beta2_override, grad_clip, wandb_config
 from ultralytics import YOLO
 from ultralytics.models.yolo.classify.train_image_encoder import ImageEncoderTrainer
-from ultralytics.utils.knn_eval import knn_callback
 
 RECIPES = {
     "default": dict(lr0=3e-4, weight_decay=0.05, warmup_epochs=1, epochs=10, momentum=0.9, grad_clip=3.0, beta2=None),
@@ -72,12 +71,11 @@ def main(argv: list[str]) -> None:
             wandb_group="distill",
         ),
     )
-    # kNN eval on ImageNet every 5 epochs (EUPE/RADIO protocol: k=20, T=0.07)
-    model.add_callback("on_fit_epoch_end", knn_callback("/data/shared-datasets/imagenet", every_n_epochs=5))
     train_args = dict(
         trainer=ImageEncoderTrainer,
         teachers=teachers,
         data="/data/shared-datasets/datacomp-12m",
+        knn_eval="/data/shared-datasets/imagenet",
         device=gpu,
         project=resume_args.get("project", "yolo-next-encoder"),
         name=name,
