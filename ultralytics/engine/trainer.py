@@ -360,6 +360,9 @@ class BaseTrainer:
         self.args.imgsz = check_imgsz(self.args.imgsz, stride=gs, floor=gs, max_dim=1)
         self.stride = gs  # for multiscale training
 
+        if self.world_size > 1:
+            self.model = nn.parallel.DistributedDataParallel(self.model, device_ids=[RANK], find_unused_parameters=True)
+
         # Batch size
         if self.batch_size < 1 and RANK == -1:  # single-GPU only, estimate best batch size
             self.args.batch = self.batch_size = self.auto_batch()
@@ -369,6 +372,7 @@ class BaseTrainer:
         if self.args.distill_model is not None and "dis_loss" not in self.loss_names:
             self.loss_names += ("dis_loss",)
         self.ema = ModelEMA(self.model)
+        self.set_class_weights()  # compute class weights after dataloader is ready
         if RANK in {-1, 0}:
             metric_keys = self.validator.metrics.keys + self.label_loss_items(prefix="val")
             self.metrics = dict(zip(metric_keys, [0] * len(metric_keys)))
@@ -831,6 +835,10 @@ class BaseTrainer:
         self.model.names = self.data["names"]
         self.model.args = self.args
 
+    def set_class_weights(self):
+        """Compute and set class weights for handling class imbalance. Override in subclasses."""
+        pass
+
     def build_targets(self, preds, targets):
         """Build target tensors for training YOLO model."""
         pass
@@ -994,7 +1002,7 @@ class BaseTrainer:
             )
             self.epochs += ckpt["epoch"]  # finetune additional epochs
         self._load_checkpoint_state(ckpt)
-        if unwrap_model(self.model).end2end:
+        if getattr(unwrap_model(self.model), "end2end", False):
             # initialize loss and resume o2o and o2m args
             unwrap_model(self.model).criterion = unwrap_model(self.model).init_criterion()
             unwrap_model(self.model).criterion.updates = start_epoch - 1
