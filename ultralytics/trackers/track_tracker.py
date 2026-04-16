@@ -117,6 +117,8 @@ def _corner_velocity(box_prev: np.ndarray, box_curr: np.ndarray) -> np.ndarray:
 def _angle_distance(tracks: list, dets: list, frame_id: int, delta_t: int = 3) -> np.ndarray:
     """Compute angle-based distance between track velocities and track-to-detection directions.
 
+    Vectorized: computes the full (N, M, 4, 2) velocity tensor in one pass.
+
     Args:
         tracks (list[TTSTrack]): Tracked objects with velocity and history.
         dets (list[TTSTrack]): Detection objects.
@@ -126,35 +128,37 @@ def _angle_distance(tracks: list, dets: list, frame_id: int, delta_t: int = 3) -
     Returns:
         (np.ndarray): Angle distance matrix of shape (N, M), values in [0, 1].
     """
-    if len(tracks) == 0 or len(dets) == 0:
-        return np.ones((len(tracks), len(dets)), dtype=np.float64)
-
-    # Get track boxes from history (delta_t frames back)
-    track_boxes_prev = np.stack([t.get_history_box(frame_id, delta_t) for t in tracks], axis=0)
-    det_boxes = np.stack([d.xyxy for d in dets], axis=0)
-
-    # Compute velocity from track's previous box to each detection (shape: N, M, 4, 2)
     n_tracks, n_dets = len(tracks), len(dets)
-    vel_t_d = np.zeros((n_tracks, n_dets, 4, 2), dtype=np.float64)
-    for i in range(n_tracks):
-        for j in range(n_dets):
-            vel_t_d[i, j] = _corner_velocity(track_boxes_prev[i], det_boxes[j])
+    if n_tracks == 0 or n_dets == 0:
+        return np.ones((n_tracks, n_dets), dtype=np.float64)
 
-    # Get track velocities (shape: N, 4, 2)
+    # Stack boxes once
+    track_boxes_prev = np.stack([t.get_history_box(frame_id, delta_t) for t in tracks], axis=0)  # (N, 4)
+    det_boxes = np.stack([d.xyxy for d in dets], axis=0)  # (M, 4)
+
+    # Delta per (track, det) pair: (N, M, 4)
+    deltas = det_boxes[None, :, :] - track_boxes_prev[:, None, :]
+
+    # Corner deltas: LT=(dx1,dy1), LB=(dx1,dy2), RT=(dx2,dy1), RB=(dx2,dy2)
+    # Shape: (N, M, 4, 2) where last dim is (dx, dy)
+    dx_idx = np.array([0, 0, 2, 2])
+    dy_idx = np.array([1, 3, 1, 3])
+    vel_dx = deltas[:, :, dx_idx]  # (N, M, 4)
+    vel_dy = deltas[:, :, dy_idx]  # (N, M, 4)
+    norms = np.sqrt(vel_dx * vel_dx + vel_dy * vel_dy) + 1e-5
+    vel_dx /= norms
+    vel_dy /= norms
+
+    # Stack track velocities: (N, 4, 2)
     track_velocities = np.stack([t.velocity for t in tracks], axis=0)
 
-    # Compute angle between track velocity and track-to-detection velocity
-    angle_dist = np.zeros((n_tracks, n_dets), dtype=np.float64)
-    for c in range(4):  # For each corner
-        # Dot product
-        dot = track_velocities[:, c, 0:1] * vel_t_d[:, :, c, 0] + track_velocities[:, c, 1:2] * vel_t_d[:, :, c, 1]
-        angle = np.abs(np.arccos(np.clip(dot, -1, 1))) / np.pi
-        angle_dist += angle / 4.0
+    # Dot product per corner: (N, M, 4)
+    dot = track_velocities[:, None, :, 0] * vel_dx + track_velocities[:, None, :, 1] * vel_dy
+    angle_dist = np.abs(np.arccos(np.clip(dot, -1, 1))).mean(axis=-1) / np.pi  # (N, M)
 
     # Fuse with detection scores
     scores = np.array([d.score for d in dets])[None, :]
     angle_dist *= scores
-
     return angle_dist
 
 
@@ -577,7 +581,16 @@ class TRACKTRACK:
         self.init_thr = getattr(args, "init_thr", 0.7)
 
         # GMC (camera motion compensation)
-        self.gmc = GMC(method=getattr(args, "gmc_method", "sparseOptFlow"))
+        gmc_method = getattr(args, "gmc_method", "sparseOptFlow")
+        gmc_downscale = getattr(args, "gmc_downscale", 3)
+        self.gmc = GMC(method=gmc_method, downscale=gmc_downscale)
+        # Tune sparseOptFlow for speed: fewer corners suffice for affine motion estimation
+        if gmc_method == "sparseOptFlow":
+            gmc_max_corners = getattr(args, "gmc_max_corners", 200)
+            self.gmc.feature_params["maxCorners"] = gmc_max_corners
+        self._gmc_skip = getattr(args, "gmc_skip_frames", 0)
+        self._gmc_warp_cached = np.eye(2, 3, dtype=np.float64)
+        self._gmc_counter = 0
 
         # ReID
         self.with_reid = getattr(args, "with_reid", False)
@@ -657,9 +670,14 @@ class TRACKTRACK:
         # Pool tracked + lost tracks
         strack_pool = self.joint_stracks(tracked_stracks, self.lost_stracks)
 
-        # Camera motion compensation
+        # Camera motion compensation (optionally skip frames for speed)
         if img is not None:
-            warp = self.gmc.apply(img, [t.xyxy for t in dets_high])
+            if self._gmc_skip > 0 and self._gmc_counter % (self._gmc_skip + 1) != 0:
+                warp = self._gmc_warp_cached
+            else:
+                warp = self.gmc.apply(img, [t.xyxy for t in dets_high])
+                self._gmc_warp_cached = warp
+            self._gmc_counter += 1
             TTSTrack.multi_gmc(strack_pool, warp)
             TTSTrack.multi_gmc(unconfirmed, warp)
 

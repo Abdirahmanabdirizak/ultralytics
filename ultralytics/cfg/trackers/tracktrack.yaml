@@ -32,6 +32,9 @@ min_track_len: 3 # (int) Minimum history length before track is confirmed
 
 # Camera motion compensation
 gmc_method: sparseOptFlow # (str) GMC method: sparseOptFlow, orb, ecc, none
+gmc_downscale: 3 # (int) Downscale factor for GMC (higher = faster, less accurate)
+gmc_max_corners: 200 # (int) Max keypoints for sparseOptFlow (lower = faster; 200 sufficient for affine)
+gmc_skip_frames: 0 # (int) Skip N frames between GMC updates (0 = every frame; >0 = faster)
 
 # ReID
 with_reid: False # (bool) Enable ReID feature matching
