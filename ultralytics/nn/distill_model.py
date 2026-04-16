@@ -209,15 +209,31 @@ class DistillationModel(nn.Module):
         loss_distill = distill_loss * batch_size
         return torch.cat([regular_loss, loss_distill]), torch.cat([regular_loss_detach, distill_loss_detach])
 
-    def loss_sl2(self, student_feat, teacher_feat, feat_idx=0, teacher_scores=None):
+    def loss_sl2(
+        self,
+        student_feat: torch.Tensor,
+        teacher_feat: torch.Tensor,
+        feat_idx: int = 0,
+        teacher_scores: tuple | None = None,
+    ) -> torch.Tensor:
+        """Compute score-weighted L2 distillation loss for a feature pair.
+
+        Args:
+            student_feat (torch.Tensor): Student feature tensor of shape (N, C, H, W).
+            teacher_feat (torch.Tensor): Teacher feature tensor of shape (N, C, H, W).
+            feat_idx (int): Index of the feature level for selecting teacher scores.
+            teacher_scores (tuple | None): Tuple of score tensors for each feature level.
+
+        Returns:
+            (torch.Tensor): The computed score-weighted L2 loss.
+        """
         teacher_score = teacher_scores[feat_idx]
-        N, C, H, W = student_feat.shape
-        student_feat = student_feat.view(N, C, -1)
-        teacher_feat = teacher_feat.view(N, C, -1)
-        dis_loss = F.mse_loss(student_feat, teacher_feat, reduction='none')
-        dis_loss = dis_loss * teacher_score
-        dis_loss = dis_loss.sum() / (teacher_score.sum() * C + 1e-9)
-        return dis_loss
+        n, c = student_feat.shape[:2]
+        student_feat = student_feat.view(n, c, -1)
+        teacher_feat = teacher_feat.view(n, c, -1)
+        mse = F.mse_loss(student_feat, teacher_feat, reduction="none")
+        weighted_mse = (mse * teacher_score).sum() / (teacher_score.sum() * c + 1e-9)
+        return weighted_mse
 
     @property
     def criterion(self):
