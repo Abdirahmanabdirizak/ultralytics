@@ -41,6 +41,7 @@ from ultralytics.nn.modules import (
     CBLinear,
     Classify,
     Concat,
+    ReID,
     Conv,
     Conv2,
     ConvTranspose,
@@ -709,6 +710,59 @@ class ClassificationModel(BaseModel):
     def init_criterion(self):
         """Initialize the loss criterion for the ClassificationModel."""
         return v8ClassificationLoss()
+
+
+class ReidModel(BaseModel):
+    """YOLO person re-identification model (inference only).
+
+    Attributes:
+        yaml (dict): Model configuration dictionary.
+        model (torch.nn.Sequential): The neural network model.
+        stride (torch.Tensor): Model stride values.
+        names (dict): Identity names dictionary.
+    """
+
+    def __init__(self, cfg="yolo26n-reid.yaml", ch=3, nc=None, verbose=True):
+        """Initialize ReidModel.
+
+        Args:
+            cfg (str | dict): Model configuration file path or dictionary.
+            ch (int): Number of input channels.
+            nc (int, optional): Number of identity classes.
+            verbose (bool): Whether to display model information.
+        """
+        super().__init__()
+        self.yaml = cfg if isinstance(cfg, dict) else yaml_model_load(cfg)
+        ch = self.yaml["channels"] = self.yaml.get("channels", ch)
+        if nc and nc != self.yaml["nc"]:
+            LOGGER.info(f"Overriding model.yaml nc={self.yaml['nc']} with nc={nc}")
+            self.yaml["nc"] = nc
+        elif not nc and not self.yaml.get("nc", None):
+            raise ValueError("nc not specified. Must specify nc in model.yaml or function arguments.")
+        self.model, self.save = parse_model(deepcopy(self.yaml), ch=ch, verbose=verbose)
+        self.stride = torch.Tensor([1])
+        self.names = {i: f"{i}" for i in range(self.yaml["nc"])}
+        self.info()
+
+    @staticmethod
+    def reshape_outputs(model, nc):
+        """Update ReID model to specified identity count.
+
+        Args:
+            model (torch.nn.Module): Model to update.
+            nc (int): New number of identity classes.
+        """
+        _, m = list((model.model if hasattr(model, "model") else model).named_children())[-1]
+        if isinstance(m, ReID):
+            if m.classifier.out_features != nc:
+                m.classifier = torch.nn.Linear(m.embed_dim, nc, bias=False)
+        elif isinstance(m, Classify):
+            if m.linear.out_features != nc:
+                m.linear = torch.nn.Linear(m.linear.in_features, nc)
+
+    def init_criterion(self):
+        """Initialize the loss criterion for the ReidModel."""
+        raise NotImplementedError("ReidModel training is not supported in this branch.")
 
 
 class RTDETRDetectionModel(DetectionModel):
@@ -1575,6 +1629,7 @@ def parse_model(d, ch, verbose=True):
     base_modules = frozenset(
         {
             Classify,
+            ReID,
             Conv,
             ConvTranspose,
             GhostConv,
@@ -1784,6 +1839,8 @@ def guess_model_task(model):
         m = cfg["head"][-1][-2].lower()  # output module name
         if m in {"classify", "classifier", "cls", "fc"}:
             return "classify"
+        if m == "reid":
+            return "reid"
         if "detect" in m:
             return "detect"
         if "segment" in m:
@@ -1808,6 +1865,8 @@ def guess_model_task(model):
         for m in model.modules():
             if isinstance(m, (Segment, YOLOESegment)):
                 return "segment"
+            elif isinstance(m, ReID):
+                return "reid"
             elif isinstance(m, Classify):
                 return "classify"
             elif isinstance(m, Pose):
