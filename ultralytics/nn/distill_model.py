@@ -278,8 +278,22 @@ class DistillationModel(nn.Module):
         self._freeze_teacher()
         return incompatible
 
-    def decouple_outputs(self, preds, shape_check=False, branch="one2one"):
-        """Decouple outputs for teacher/student models."""
+    def decouple_outputs(self, preds, shape_check: bool = False, branch: str = "one2one"):
+        """Decouple outputs for teacher/student models.
+
+        This method handles different output formats from YOLO models, including
+        tuple outputs (train/val mode), dict outputs with branches (one2one/one2many),
+        and direct tensor outputs.
+
+        Args:
+            preds (torch.Tensor | tuple | dict): Model predictions in various formats.
+            shape_check (bool): If True, extract the "boxes" field from dict outputs.
+                Used when checking feature dimensions for projector initialization.
+            branch (str): Which branch to extract from dict outputs ("one2one" or "one2many").
+
+        Returns:
+            (torch.Tensor | dict): The decoupled predictions.
+        """
         if isinstance(preds, tuple):  # decouple for val mode
             preds = preds[1]
         if isinstance(preds, dict):
