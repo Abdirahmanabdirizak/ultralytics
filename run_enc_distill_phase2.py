@@ -105,7 +105,7 @@ def main(argv: list[str]) -> None:
     train_args = dict(
         pretrained=phase1_weights,
         device=gpu if mode == "coco_det" else int(gpu),
-        project=resume_args.get("project") or LOCAL_PROJECT,
+        project=LOCAL_PROJECT,
         name=name,
         cos_lr=True,
         warmup_bias_lr=0,

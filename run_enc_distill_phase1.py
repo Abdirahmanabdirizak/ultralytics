@@ -112,7 +112,7 @@ def main(argv: list[str]) -> None:
         l1_weight=l1_weight,
         cls_l1=cls_l1,
         device=gpu,
-        project=resume_args.get("project") or LOCAL_PROJECT,
+        project=LOCAL_PROJECT,
         name=name,
         epochs=epochs or r["epochs"],
         batch=128,
