@@ -8,6 +8,10 @@ Usage:
 
     # Text-aligned experiments: picks up attrs from TextClassificationTrainer
     model.add_callback("on_pretrain_routine_start", wandb_config.log_config())
+
+    # Fork a parent run (e.g. to recover from a corrupted mid-training state)
+    wandb_config.fork_and_attach("parent-run-id", fork_step=7, name="phase1-c3")
+    model.train(...)  # Ultralytics' wb.init picks up WANDB_* env vars and attaches
 """
 
 import os
@@ -16,6 +20,7 @@ from pathlib import Path
 from ultralytics.utils import YAML
 
 EXTRA_ATTRS = ("loss_mode", "muon_w", "use_clip_classifier", "teacher_variant", "teacher_temps", "grad_clip_norm")
+_WANDB_INTERNAL_PREFIX = "_"
 
 
 def log_config(**extra_kv):
@@ -52,3 +57,65 @@ def log_config(**extra_kv):
             pass
 
     return callback
+
+
+def fork_and_attach(
+    parent_run_id: str,
+    fork_step: int,
+    name: str,
+    entity: str = "fca",
+    project: str = "yolo-next-encoder",
+    use_native_fork: bool = False,
+) -> str:
+    """Create a new wandb run that inherits parent's history up to ``fork_step``, then DDP-handoff via env vars.
+
+    Two modes:
+    - ``use_native_fork=True``: uses wandb's ``fork_from`` (private preview; requires support enablement).
+    - ``use_native_fork=False`` (default): manual replay via ``wandb.Api`` — copies parent's per-step history
+        rows up to ``fork_step`` into a fresh run, preserving the step axis. This is the portable fallback.
+
+    After the forked run is created and finished, exports ``WANDB_RUN_ID`` + ``WANDB_RESUME`` + ``WANDB_PROJECT`` +
+    ``WANDB_ENTITY`` so that DDP rank-0's ``wandb.init(...)`` attaches to the forked run instead of creating a new one.
+
+    Args:
+        parent_run_id (str): ID of the parent run to fork from.
+        fork_step (int): Inclusive ``_step`` value in the parent run where the fork branches off.
+        name (str): Display name for the forked run.
+        entity (str, optional): WandB entity.
+        project (str, optional): WandB project.
+        use_native_fork (bool, optional): If True, use ``fork_from`` (requires account enablement).
+
+    Returns:
+        (str): ID of the newly created forked run.
+    """
+    import wandb
+
+    if use_native_fork:
+        run = wandb.init(
+            entity=entity, project=project, name=name, fork_from=f"{parent_run_id}?_step={fork_step}"
+        )
+        forked_id = run.id
+        run.finish()
+    else:
+        api = wandb.Api()
+        parent = api.run(f"{entity}/{project}/{parent_run_id}")
+        df = parent.history(pandas=True, samples=100000)
+        df = df[df["_step"] <= fork_step].sort_values("_step").reset_index(drop=True)
+        parent_config = {k: v for k, v in dict(parent.config).items() if not k.startswith(_WANDB_INTERNAL_PREFIX)}
+        run = wandb.init(entity=entity, project=project, name=name, config=parent_config)
+        for _, row in df.iterrows():
+            step = int(row["_step"])
+            metrics = {}
+            for k, v in row.items():
+                if k.startswith(_WANDB_INTERNAL_PREFIX):
+                    continue
+                if isinstance(v, float) and v != v:  # filter NaN
+                    continue
+                metrics[k] = v
+            if metrics:
+                run.log(metrics, step=step)
+        forked_id = run.id
+        run.finish()
+
+    os.environ.update(WANDB_RUN_ID=forked_id, WANDB_RESUME="must", WANDB_PROJECT=project, WANDB_ENTITY=entity)
+    return forked_id

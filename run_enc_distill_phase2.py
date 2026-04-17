@@ -50,11 +50,19 @@ _AUG_ARGS = dict(
 LOCAL_PROJECT = "/home/fatih/runs/yolo-next-encoder"
 NFS_MIRROR_ROOT = "/data/shared-datasets/fatih-runs/classify/yolo-next-encoder"
 SYNC_INTERVAL_SEC = 600
+assert Path(LOCAL_PROJECT).is_absolute() and str(LOCAL_PROJECT).startswith("/home/"), (
+    f"LOCAL_PROJECT must be absolute and under /home/ to decouple from NFS, got {LOCAL_PROJECT}"
+)
 
 
 def main(argv: list[str]) -> None:
     """Launch a fresh phase 2 run or resume from a checkpoint."""
     argv, resume = _pop_resume(argv[1:])
+    fork_from = ""
+    if "--fork_from" in argv:
+        i = argv.index("--fork_from")
+        fork_from = argv[i + 1]
+        argv = argv[:i] + argv[i + 2:]
     resume_args = _load_train_args(resume) if resume else {}
     gpu = argv[0] if argv else "0"
     phase1_weights = (
@@ -187,6 +195,9 @@ def main(argv: list[str]) -> None:
         )
     if resume:
         train_args["resume"] = resume
+    if fork_from:
+        parent_id, fork_step = fork_from.split(":")
+        wandb_config.fork_and_attach(parent_id, int(fork_step), name)
     model.train(**train_args)
 
 

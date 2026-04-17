@@ -24,6 +24,9 @@ RECIPES = {
 LOCAL_PROJECT = "/home/fatih/runs/yolo-next-encoder"
 NFS_MIRROR_ROOT = "/data/shared-datasets/fatih-runs/classify/yolo-next-encoder"
 SYNC_INTERVAL_SEC = 600
+assert Path(LOCAL_PROJECT).is_absolute() and str(LOCAL_PROJECT).startswith("/home/"), (
+    f"LOCAL_PROJECT must be absolute and under /home/ to decouple from NFS, got {LOCAL_PROJECT}"
+)
 
 
 def _pop_flag(argv: list[str], flag: str, is_bool: bool = False) -> tuple[list[str], str]:
@@ -63,6 +66,7 @@ def main(argv: list[str]) -> None:
     args, l1_w = _pop_flag(args, "--l1_weight")
     args, cls_l1_str = _pop_flag(args, "--cls_l1", is_bool=True)
     args, lr_override = _pop_flag(args, "--lr")
+    args, fork_from = _pop_flag(args, "--fork_from")  # format: <parent_run_id>:<fork_step>
 
     cos_weight = float(cos_w) if cos_w else 0.9
     l1_weight = float(l1_w) if l1_w else 0.1
@@ -137,6 +141,9 @@ def main(argv: list[str]) -> None:
     )
     if resume:
         train_args["resume"] = resume
+    if fork_from:
+        parent_id, fork_step = fork_from.split(":")
+        wandb_config.fork_and_attach(parent_id, int(fork_step), name)
     model.train(**train_args)
 
 
