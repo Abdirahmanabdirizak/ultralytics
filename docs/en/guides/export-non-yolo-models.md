@@ -267,23 +267,6 @@ The standalone export functions are available starting from `ultralytics>=8.4.38
 
 Yes. torchvision classifiers, detectors, and segmentation models export to `.mlpackage` via `torch2coreml`. For image classification models, pass a list of class names to `classifier_names` to bake in a classification head. Run the export on macOS or Linux. CoreML is not supported on Windows. See the [CoreML integration](../integrations/coreml.md) for iOS deployment details.
 
-### Which export format should I pick for my deployment target?
-
-It depends on your runtime environment:
-
-| Deployment target             | Recommended format                                                                                                                    |
-| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
-| Cross-platform cloud / server | [ONNX](../integrations/onnx.md)                                                                                                       |
-| Intel CPU or iGPU             | [OpenVINO](../integrations/openvino.md)                                                                                               |
-| iOS / macOS / Apple Silicon   | [CoreML](../integrations/coreml.md)                                                                                                   |
-| Android / mobile              | [TFLite](../integrations/tflite.md) (via TF SavedModel), [NCNN](../integrations/ncnn.md), [ExecuTorch](../integrations/executorch.md) |
-| Browser / JavaScript          | TF.js (via TF Frozen Graph)                                                                                                           |
-| Edge / embedded ARM           | [NCNN](../integrations/ncnn.md), [MNN](../integrations/mnn.md)                                                                        |
-| Chinese ecosystem / Baidu     | [PaddlePaddle](../integrations/paddlepaddle.md)                                                                                       |
-| PyTorch-first C++ runtime     | [TorchScript](../integrations/torchscript.md), [ExecuTorch](../integrations/executorch.md)                                            |
-
-For NVIDIA GPUs specifically, the Ultralytics [TensorRT integration](../integrations/tensorrt.md) gives the best performance but requires YOLO-specific model attributes and is not available through these non-YOLO utilities.
-
 ### Can I quantize my exported model to INT8 or FP16?
 
 Yes, for several formats. Pass `half=True` for FP16 or `int8=True` for INT8 when exporting to OpenVINO, CoreML, MNN, or NCNN. INT8 in OpenVINO additionally requires a `calibration_dataset` argument for [post-training quantization](https://www.ultralytics.com/glossary/model-quantization). See each format's integration page for quantization trade-offs.
