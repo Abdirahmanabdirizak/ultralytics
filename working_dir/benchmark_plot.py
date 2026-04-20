@@ -335,7 +335,7 @@ BENCHMARKS = {
                 ("xxl", 27.0, {"ap": 60.1, "ap50": 78.5, "ap75": 65.8, "ap_small": 43.7, "ap_medium": 65.1, "ap_large": 76.3}),
             ],
             "YOLO26_RTDETR (obj365)": [
-                ("l", 8.1, {"ap": 56.6, "ap50": 74.1, "ap75": 61.7, "ap_small": 40.8, "ap_medium": 61.0, "ap_large": 71.5}),
+                ("l", 8.1, {"ap": 56.7, "ap50": 74.3, "ap75": 61.8, "ap_small": 41.7, "ap_medium": 61.1, "ap_large": 71.0}),
             ],
             "LW-DETR (obj365)": [
                 # LW-DETR obj365 results as reported in ECDet paper (arXiv 2603.18739), TRT v10.6
@@ -443,7 +443,7 @@ BENCHMARKS = {
                 ("xxl", 32.9, {"ap": 59.8, "ap50": 77.1, "ap75": 65.3, "ap_small": 42.8, "ap_medium": 65.5, "ap_large": 77.1}),
             ],
             "YOLO26_RTDETR (obj365)": [
-                ("l", 8.1, {"ap": 56.6, "ap50": 74.1, "ap75": 61.7, "ap_small": 40.8, "ap_medium": 61.0, "ap_large": 71.5}),
+                ("l", 8.1, {"ap": 56.7, "ap50": 74.3, "ap75": 61.8, "ap_small": 41.7, "ap_medium": 61.1, "ap_large": 71.0}),
             ],
         },
     },
