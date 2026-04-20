@@ -22,18 +22,18 @@ Ultralytics ships standalone export utilities that wrap all of these behind one 
 
 The `torch2*` functions take a standard `torch.nn.Module` and an example input tensor. MNN, TF SavedModel, and TF Frozen Graph go through an intermediate ONNX or Keras artifact. No YOLO-specific attributes are required in either case.
 
-| Format          | Function              | Install                                            | Output                         |
-| --------------- | --------------------- | -------------------------------------------------- | ------------------------------ |
-| ONNX            | `torch2onnx()`        | `pip install onnx`                                 | `.onnx` file                   |
-| TorchScript     | `torch2torchscript()` | included with PyTorch                              | `.torchscript` file            |
-| OpenVINO        | `torch2openvino()`    | `pip install openvino`                             | `_openvino_model/` directory   |
-| CoreML          | `torch2coreml()`      | `pip install coremltools`                          | `.mlpackage`                   |
-| TF SavedModel   | `onnx2saved_model()`  | see detailed requirements below                    | `_saved_model/` directory      |
-| TF Frozen Graph | `keras2pb()`          | same as TF SavedModel                              | `.pb` file                     |
-| NCNN            | `torch2ncnn()`        | `pip install ncnn pnnx`                            | `_ncnn_model/` directory       |
-| MNN             | `onnx2mnn()`          | `pip install MNN`                                  | `.mnn` file                    |
-| PaddlePaddle    | `torch2paddle()`      | `pip install paddlepaddle x2paddle`                | `_paddle_model/` directory     |
-| ExecuTorch      | `torch2executorch()`  | `pip install executorch`                           | `_executorch_model/` directory |
+| Format          | Function              | Install                             | Output                         |
+| --------------- | --------------------- | ----------------------------------- | ------------------------------ |
+| ONNX            | `torch2onnx()`        | `pip install onnx`                  | `.onnx` file                   |
+| TorchScript     | `torch2torchscript()` | included with PyTorch               | `.torchscript` file            |
+| OpenVINO        | `torch2openvino()`    | `pip install openvino`              | `_openvino_model/` directory   |
+| CoreML          | `torch2coreml()`      | `pip install coremltools`           | `.mlpackage`                   |
+| TF SavedModel   | `onnx2saved_model()`  | see detailed requirements below     | `_saved_model/` directory      |
+| TF Frozen Graph | `keras2pb()`          | same as TF SavedModel               | `.pb` file                     |
+| NCNN            | `torch2ncnn()`        | `pip install ncnn pnnx`             | `_ncnn_model/` directory       |
+| MNN             | `onnx2mnn()`          | `pip install MNN`                   | `.mnn` file                    |
+| PaddlePaddle    | `torch2paddle()`      | `pip install paddlepaddle x2paddle` | `_paddle_model/` directory     |
+| ExecuTorch      | `torch2executorch()`  | `pip install executorch`            | `_executorch_model/` directory |
 
 !!! note "ONNX as an intermediate format"
 
