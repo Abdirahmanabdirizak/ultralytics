@@ -368,9 +368,9 @@ class BaseTrainer:
             self._setup_ddp()
         self._setup_train()
 
-        nb = len(self.train_loader)  # number of batches
-        nw = max(round(self.args.warmup_epochs * nb), 100) if self.args.warmup_epochs > 0 else -1  # warmup iterations
-        last_opt_step = -1
+        self.nb = len(self.train_loader)  # number of batches
+        nw = max(round(self.args.warmup_epochs * self.nb), 100) if self.args.warmup_epochs > 0 else -1  # warmup iterations
+        self.last_opt_step = -1
         self.epoch_time = None
         self.epoch_time_start = time.time()
         self.train_time_start = time.time()
@@ -382,7 +382,7 @@ class BaseTrainer:
             f"Starting training for " + (f"{self.args.time} hours..." if self.args.time else f"{self.epochs} epochs...")
         )
         if self.args.close_mosaic:
-            base_idx = (self.epochs - self.args.close_mosaic) * nb
+            base_idx = (self.epochs - self.args.close_mosaic) * self.nb
             self.plot_idx.extend([base_idx, base_idx + 1, base_idx + 2])
         epoch = self.start_epoch
         self.optimizer.zero_grad()  # zero any resumed gradients to ensure stability on train start
@@ -405,12 +405,12 @@ class BaseTrainer:
 
             if RANK in {-1, 0}:
                 LOGGER.info(self.progress_string())
-                pbar = TQDM(enumerate(self.train_loader), total=nb)
+                pbar = TQDM(enumerate(self.train_loader), total=self.nb)
             self.tloss = None
             for i, batch in pbar:
                 self.run_callbacks("on_train_batch_start")
                 # Warmup
-                ni = i + nb * epoch
+                ni = i + self.nb * epoch
                 if ni <= nw:
                     xi = [0, nw]  # x interp
                     self.accumulate = max(1, int(np.interp(ni, xi, [1, self.args.nbs / self.batch_size]).round()))
@@ -459,14 +459,14 @@ class BaseTrainer:
                     self._clear_memory()
                     self._build_train_pipeline()  # rebuild dataloaders, optimizer, scheduler
                     self.scheduler.last_epoch = self.start_epoch - 1
-                    nb = len(self.train_loader)
-                    nw = max(round(self.args.warmup_epochs * nb), 100) if self.args.warmup_epochs > 0 else -1
-                    last_opt_step = -1
+                    self.nb = len(self.train_loader)
+                    nw = max(round(self.args.warmup_epochs * self.nb), 100) if self.args.warmup_epochs > 0 else -1
+                    self.last_opt_step = -1
                     self.optimizer.zero_grad()
                     break  # restart epoch loop with reduced batch size
-                if ni - last_opt_step >= self.accumulate:
+                if ni - self.last_opt_step >= self.accumulate:
                     self.optimizer_step()
-                    last_opt_step = ni
+                    self.last_opt_step = ni
 
                     # Timed stopping
                     if self.args.time:
@@ -771,7 +771,7 @@ class BaseTrainer:
         """Raise NotImplementedError (must be implemented by subclasses)."""
         raise NotImplementedError("get_validator function not implemented in trainer")
 
-    def get_dataloader(self, dataset_path, batch_size=16, rank=0, mode="train"):
+    def get_dataloader(self, dataset_path, batch_size=16, rank=0, mode="train", **kwargs):
         """Raise NotImplementedError (must return a `torch.utils.data.DataLoader` in subclasses)."""
         raise NotImplementedError("get_dataloader function not implemented in trainer")
 
