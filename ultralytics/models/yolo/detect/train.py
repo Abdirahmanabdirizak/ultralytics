@@ -11,11 +11,13 @@ import numpy as np
 import torch
 import torch.nn as nn
 
+import torch.distributed as dist
 from ultralytics.data import build_dataloader, build_yolo_dataset
 from ultralytics.engine.trainer import BaseTrainer
 from ultralytics.models import yolo
 from ultralytics.nn.tasks import DetectionModel
-from ultralytics.utils import DEFAULT_CFG, LOGGER, RANK
+from ultralytics.utils import DEFAULT_CFG, LOCAL_RANK, LOGGER, RANK
+from ultralytics.utils.afss import AFSSScheduler
 from ultralytics.utils.patches import override_configs
 from ultralytics.utils.plotting import plot_images, plot_labels
 from ultralytics.utils.torch_utils import torch_distributed_zero_first, unwrap_model
@@ -61,6 +63,10 @@ class DetectionTrainer(BaseTrainer):
             _callbacks (dict, optional): Dictionary of callback functions to be executed during training.
         """
         super().__init__(cfg, overrides, _callbacks)
+        if self.args.afss:
+            self.add_callback("on_train_epoch_start", self._afss_on_epoch_start)
+            self.add_callback("on_train_epoch_end", self._afss_on_epoch_end)
+            self.add_callback("on_model_save", self._afss_save_state)
 
     def build_dataset(self, img_path: str, mode: str = "train", batch: int | None = None):
         """Build YOLO Dataset for training or validation.
@@ -76,7 +82,9 @@ class DetectionTrainer(BaseTrainer):
         gs = max(int(unwrap_model(self.model).stride.max()), 32)
         return build_yolo_dataset(self.args, img_path, batch, self.data, mode=mode, rect=mode == "val", stride=gs)
 
-    def get_dataloader(self, dataset_path: str, batch_size: int = 16, rank: int = 0, mode: str = "train"):
+    def get_dataloader(
+        self, dataset_path: str, batch_size: int = 16, rank: int = 0, mode: str = "train", active_indices=None
+    ):
         """Construct and return dataloader for the specified mode.
 
         Args:
@@ -84,6 +92,7 @@ class DetectionTrainer(BaseTrainer):
             batch_size (int): Number of images per batch.
             rank (int): Process rank for distributed training.
             mode (str): 'train' for training dataloader, 'val' for validation dataloader.
+            active_indices (list[int], optional): Active image indices for AFSS sampling.
 
         Returns:
             (DataLoader): PyTorch dataloader object.
@@ -91,6 +100,8 @@ class DetectionTrainer(BaseTrainer):
         assert mode in {"train", "val"}, f"Mode must be 'train' or 'val', not {mode}."
         with torch_distributed_zero_first(rank):  # init dataset *.cache only once if DDP
             dataset = self.build_dataset(dataset_path, mode, batch_size)
+        if active_indices is not None:
+            dataset.active_indices = active_indices
         shuffle = mode == "train"
         if getattr(dataset, "rect", False) and shuffle and not np.all(dataset.batch_shapes == dataset.batch_shapes[0]):
             LOGGER.warning("'rect=True' is incompatible with DataLoader shuffle, setting shuffle=False")
@@ -236,6 +247,112 @@ class DetectionTrainer(BaseTrainer):
         boxes = np.concatenate([lb["bboxes"] for lb in self.train_loader.dataset.labels], 0)
         cls = np.concatenate([lb["cls"] for lb in self.train_loader.dataset.labels], 0)
         plot_labels(boxes, cls.squeeze(), names=self.data["names"], save_dir=self.save_dir, on_plot=self.on_plot)
+
+    def _unwrap_dataset(self, dataset):
+        """Unwrap a dataset from any dataloader wrapper layers."""
+        while hasattr(dataset, "dataset"):
+            dataset = dataset.dataset
+        return dataset
+
+    def _afss_on_epoch_start(self):
+        """AFSS callback: sample active indices at the start of each epoch after warmup."""
+        if not hasattr(self, "afss_scheduler"):
+            # Lazy init on first epoch
+            dataset = self._unwrap_dataset(self.train_loader.dataset)
+
+            self.afss_scheduler = AFSSScheduler(
+                len(dataset), warmup_epochs=self.args.warmup_epochs, seed=self.args.seed
+            )
+            self.afss_tau = self.afss_scheduler.tau
+            self.afss_current_indices = list(range(len(dataset)))
+
+            # Resume: restore scheduler state if available
+            afss_path = self.wdir / "afss_state.pt"
+            if afss_path.exists():
+                state = torch.load(afss_path, weights_only=False)
+                self.afss_scheduler.state = state
+
+        epoch = self.epoch
+        if epoch < self.afss_tau:
+            return
+
+        selected_indices = self.afss_scheduler.sample_indices(epoch)
+
+        # DDP broadcast
+        if self.world_size > 1:
+            if RANK == 0:
+                broadcast_list = [selected_indices]
+            else:
+                broadcast_list = [None]
+            dist.broadcast_object_list(broadcast_list, src=0)
+            selected_indices = broadcast_list[0]
+
+        if self.world_size > 1:
+            # Rebuild loader for DDP so DistributedSampler sees new length
+            batch_size = self.batch_size // self.world_size
+            self.train_loader = self.get_dataloader(
+                self.data["train"],
+                batch_size=batch_size,
+                rank=LOCAL_RANK,
+                mode="train",
+                active_indices=selected_indices,
+            )
+
+            new_dataset = self._unwrap_dataset(self.train_loader.dataset)
+
+            if self.args.close_mosaic and epoch >= (self.epochs - self.args.close_mosaic):
+                new_dataset.close_mosaic(hyp=copy(self.args))
+        else:
+            dataset = self._unwrap_dataset(self.train_loader.dataset)
+            dataset.active_indices = selected_indices
+            self.train_loader.reset()
+
+        self.afss_current_indices = selected_indices
+        self.nb = len(self.train_loader)
+        # Adjust last_opt_step so optimizer stepping continues correctly when nb changes
+        self.last_opt_step = epoch * self.nb - self.accumulate
+        LOGGER.info(f"AFSS epoch {epoch}: training on {len(selected_indices)}/{self.afss_scheduler.num_images} images")
+
+    def _afss_on_epoch_end(self):
+        """AFSS callback: update last seen and refresh metrics at the end of each epoch."""
+        if not hasattr(self, "afss_scheduler"):
+            return
+        epoch = self.epoch
+        self.afss_scheduler.update_last_seen(self.afss_current_indices, epoch)
+        if epoch >= self.afss_tau and (epoch - self.afss_tau) % 5 == 0:
+            self._afss_refresh_metrics()
+
+    def _afss_refresh_metrics(self):
+        """Run validation on the training set to refresh per-image precision/recall for AFSS."""
+        from pathlib import Path
+
+        batch_size = self.batch_size // max(self.world_size, 1)
+        train_eval_loader = self.get_dataloader(self.data["train"], batch_size=batch_size, rank=LOCAL_RANK, mode="val")
+
+        validator = self.get_validator().__class__(
+            train_eval_loader,
+            save_dir=self.save_dir / "afss_train_eval",
+            args=copy(self.args),
+            _callbacks=self.callbacks,
+        )
+        validator(self)
+
+        if RANK in {-1, 0}:
+            image_metrics = validator.metrics.box.image_metrics
+            dataset = self._unwrap_dataset(self.train_loader.dataset)
+            filename_to_idx = {Path(f).name: i for i, f in enumerate(dataset.im_files)}
+            self.afss_scheduler.update_metrics(image_metrics, filename_to_idx)
+            LOGGER.info(f"AFSS: refreshed metrics for {len(image_metrics)} images")
+
+        if self.world_size > 1:
+            state_list = [self.afss_scheduler.state if RANK == 0 else None]
+            dist.broadcast_object_list(state_list, src=0)
+            self.afss_scheduler.state = state_list[0]
+
+    def _afss_save_state(self):
+        """Save AFSS scheduler state to a sidecar checkpoint file."""
+        if hasattr(self, "afss_scheduler") and RANK in {-1, 0}:
+            torch.save(self.afss_scheduler.state, self.wdir / "afss_state.pt")
 
     def auto_batch(self):
         """Get optimal batch size by calculating memory occupation of model.
