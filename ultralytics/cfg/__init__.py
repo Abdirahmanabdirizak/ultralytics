@@ -513,7 +513,7 @@ def check_dict_alignment(
     base_keys, custom_keys = (frozenset(x.keys()) for x in (base, custom))
     # Allow 'augmentations' as a valid custom parameter for custom Albumentations transforms
     if allowed_custom_keys is None:
-        allowed_custom_keys = {"augmentations", "save_dir"}
+        allowed_custom_keys = {"augmentations", "save_dir", "opt_level"}
     if mismatched := [k for k in custom_keys if k not in base_keys and k not in allowed_custom_keys]:
         from difflib import get_close_matches
 
