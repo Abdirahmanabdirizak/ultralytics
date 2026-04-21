@@ -21,7 +21,7 @@ NCNN                    | `ncnn`                    | yolo26n_ncnn_model/
 IMX                     | `imx`                     | yolo26n_imx_model/
 RKNN                    | `rknn`                    | yolo26n_rknn_model/
 ExecuTorch              | `executorch`              | yolo26n_executorch_model/
-Axelera                 | `axelera`                 | yolo26n_axelera_model/
+Axelera AI              | `axelera`                 | yolo26n_axelera_model/
 
 Requirements:
     $ pip install "ultralytics[export]"
@@ -51,7 +51,7 @@ Inference:
                          yolo26n_imx_model          # IMX
                          yolo26n_rknn_model         # RKNN
                          yolo26n_executorch_model   # ExecuTorch
-                         yolo26n_axelera_model      # Axelera
+                         yolo26n_axelera_model      # Axelera AI
 
 TensorFlow.js:
     $ cd .. && git clone https://github.com/zldrobit/tfjs-yolov5-example.git && cd tfjs-yolov5-example
@@ -76,18 +76,19 @@ import numpy as np
 import torch
 
 from ultralytics import __version__
-from ultralytics.cfg import TASK2DATA, get_cfg
+from ultralytics.cfg import TASK2CALIBRATIONDATA, TASK2DATA, get_cfg
 from ultralytics.data import build_dataloader
 from ultralytics.data.dataset import YOLODataset
 from ultralytics.data.utils import check_cls_dataset, check_det_dataset
 from ultralytics.nn.autobackend import check_class_names, default_class_names
-from ultralytics.nn.modules import C2f, Classify, Detect, RTDETRDecoder
+from ultralytics.nn.modules import C2f, Classify, Detect, RTDETRDecoder, Segment26
 from ultralytics.nn.tasks import ClassificationModel, DetectionModel, SegmentationModel, WorldModel
 from ultralytics.utils import (
     ARM64,
     DEFAULT_CFG,
     IS_DEBIAN_BOOKWORM,
     IS_DEBIAN_TRIXIE,
+    IS_DOCKER,
     IS_RASPBERRYPI,
     IS_UBUNTU,
     LINUX,
@@ -106,7 +107,6 @@ from ultralytics.utils import (
     is_jetson,
 )
 from ultralytics.utils.checks import (
-    IS_PYTHON_3_10,
     IS_PYTHON_MINIMUM_3_9,
     check_apt_requirements,
     check_executorch_requirements,
@@ -127,6 +127,7 @@ from ultralytics.utils.torch_utils import (
     TORCH_1_13,
     TORCH_2_1,
     TORCH_2_3,
+    TORCH_2_8,
     TORCH_2_9,
     select_device,
 )
@@ -166,7 +167,7 @@ def export_formats():
         ["IMX", "imx", "_imx_model", True, True, ["int8", "fraction", "nms"]],
         ["RKNN", "rknn", "_rknn_model", False, False, ["batch", "name"]],
         ["ExecuTorch", "executorch", "_executorch_model", True, False, ["batch"]],
-        ["Axelera", "axelera", "_axelera_model", False, False, ["batch", "int8", "fraction"]],
+        ["Axelera AI", "axelera", "_axelera_model", False, False, ["batch", "int8", "fraction", "data"]],
     ]
     return dict(zip(["Format", "Argument", "Suffix", "CPU", "GPU", "Arguments"], zip(*x)))
 
@@ -325,15 +326,13 @@ class Exporter:
         fmt_keys = dict(zip(fmts_dict["Argument"], fmts_dict["Arguments"]))[fmt]
         validate_args(fmt, self.args, fmt_keys)
         if fmt == "axelera":
-            if not IS_PYTHON_3_10:
-                raise SystemError("Axelera export only supported on Python 3.10.")
+            if model.task == "segment" and any(isinstance(m, Segment26) for m in model.modules()):
+                raise ValueError("Axelera export does not currently support YOLO26 segmentation models.")
             if not self.args.int8:
                 LOGGER.warning("Setting int8=True for Axelera mixed-precision export.")
                 self.args.int8 = True
-            if model.task not in {"detect"}:
-                raise ValueError("Axelera export only supported for detection models.")
             if not self.args.data:
-                self.args.data = "coco128.yaml"  # Axelera default to coco128.yaml
+                self.args.data = TASK2CALIBRATIONDATA.get(model.task)
         if fmt == "imx":
             if not self.args.int8:
                 LOGGER.warning("IMX export requires int8=True, setting int8=True.")
@@ -477,7 +476,7 @@ class Exporter:
                 m.agnostic_nms = self.args.agnostic_nms
                 m.xyxy = self.args.nms and fmt != "coreml"
                 m.shape = None  # reset cached shape for new export input size
-                if hasattr(model, "pe") and hasattr(m, "fuse"):  # for YOLOE models
+                if hasattr(model, "pe") and hasattr(m, "fuse") and not hasattr(m, "lrpc"):  # for YOLOE models
                     m.fuse(model.pe.to(self.device))
             elif isinstance(m, C2f) and not is_tf_format:
                 # EdgeTPU does not support FlexSplitV while split provides cleaner ONNX graph
@@ -602,9 +601,9 @@ class Exporter:
         from ultralytics.utils.export.torchscript import torch2torchscript
 
         return torch2torchscript(
-            NMSModel(self.model, self.args) if self.args.nms else self.model,
-            self.im,
-            self.file,
+            model=NMSModel(self.model, self.args) if self.args.nms else self.model,
+            im=self.im,
+            output_file=self.file.with_suffix(".torchscript"),
             optimize=self.args.optimize,
             metadata=self.metadata,
             prefix=prefix,
@@ -693,9 +692,9 @@ class Exporter:
     @try_export
     def export_openvino(self, prefix=colorstr("OpenVINO:")):
         """Export YOLO model to OpenVINO format."""
-        from ultralytics.utils.export import torch2openvino
+        from ultralytics.utils.export.openvino import torch2openvino
 
-        # OpenVINO <= 2025.1.0 error on macOS 15.4+: https://github.com/openvinotoolkit/openvino/issues/30023"
+        # OpenVINO <= 2025.1.0 error on macOS 15.4+: https://github.com/openvinotoolkit/openvino/issues/30023
         check_requirements("openvino>=2025.2.0" if MACOS and MACOS_VERSION >= "15.4" else "openvino>=2024.0.0")
         import openvino as ov
 
@@ -758,16 +757,26 @@ class Exporter:
         """Export YOLO model to PaddlePaddle format."""
         from ultralytics.utils.export.paddle import torch2paddle
 
-        return torch2paddle(self.model, self.im, self.file, self.metadata, prefix)
+        return torch2paddle(
+            model=self.model,
+            im=self.im,
+            output_dir=str(self.file).replace(self.file.suffix, f"_paddle_model{os.sep}"),
+            metadata=self.metadata,
+            prefix=prefix,
+        )
 
     @try_export
     def export_mnn(self, prefix=colorstr("MNN:")):
         """Export YOLO model to MNN format using MNN https://github.com/alibaba/MNN."""
         from ultralytics.utils.export.mnn import onnx2mnn
 
-        f_onnx = self.export_onnx()
         return onnx2mnn(
-            f_onnx, self.file, half=self.args.half, int8=self.args.int8, metadata=self.metadata, prefix=prefix
+            onnx_file=self.export_onnx(),
+            output_file=self.file.with_suffix(".mnn"),
+            half=self.args.half,
+            int8=self.args.int8,
+            metadata=self.metadata,
+            prefix=prefix,
         )
 
     @try_export
@@ -776,9 +785,9 @@ class Exporter:
         from ultralytics.utils.export.ncnn import torch2ncnn
 
         return torch2ncnn(
-            self.model,
-            self.im,
-            self.file,
+            model=self.model,
+            im=self.im,
+            output_dir=str(self.file).replace(self.file.suffix, "_ncnn_model/"),
             half=self.args.half,
             metadata=self.metadata,
             device=self.device,
@@ -846,6 +855,7 @@ class Exporter:
         if self.args.nms and self.model.task == "detect":
             ct_model = pipeline_coreml(
                 ct_model,
+                self.output_shape,
                 weights_dir=None if mlmodel else ct_model.weights_dir,
                 metadata=self.metadata,
                 mlmodel=mlmodel,
@@ -986,9 +996,7 @@ class Exporter:
         """Export YOLO model to TensorFlow GraphDef *.pb format https://github.com/leimao/Frozen-Graph-TensorFlow."""
         from ultralytics.utils.export.tensorflow import keras2pb
 
-        f = self.file.with_suffix(".pb")
-        keras2pb(keras_model, f, prefix)
-        return f
+        return keras2pb(keras_model, output_file=self.file.with_suffix(".pb"), prefix=prefix)
 
     @try_export
     def export_tflite(self, prefix=colorstr("TensorFlow Lite:")):
@@ -1009,58 +1017,23 @@ class Exporter:
     @try_export
     def export_axelera(self, prefix=colorstr("Axelera:")):
         """Export YOLO model to Axelera format."""
-        os.environ["PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION"] = "python"
-        try:
-            from axelera.compiler import CompilerConfig
-        except ImportError:
-            check_apt_requirements(
-                ["libllvm14", "libgirepository1.0-dev", "pkg-config", "libcairo2-dev", "build-essential", "cmake"]
-            )
+        assert LINUX and not (ARM64 and IS_DOCKER), (
+            "export is only supported on Linux and is not supported on ARM64 Docker."
+        )
+        assert TORCH_2_8, "export requires torch>=2.8.0."
 
-            check_requirements(
-                "axelera-voyager-sdk==1.5.2",
-                cmds="--extra-index-url https://software.axelera.ai/artifactory/axelera-runtime-pypi "
-                "--extra-index-url https://software.axelera.ai/artifactory/axelera-dev-pypi",
-            )
-            from axelera.compiler import CompilerConfig
+        from ultralytics.utils.export.axelera import torch2axelera
 
-        from ultralytics.utils.export.axelera import onnx2axelera
-
-        self.args.opset = 17  # hardcode opset for Axelera
-        onnx_path = self.export_onnx()
-        model_name = Path(onnx_path).stem
-        export_path = Path(f"{model_name}_axelera_model")
-        export_path.mkdir(exist_ok=True)
-
-        if "C2PSA" in self.model.__str__():  # YOLO11
-            config = CompilerConfig(
-                quantization_scheme="per_tensor_min_max",
-                ignore_weight_buffers=False,
-                resources_used=0.25,
-                aipu_cores_used=1,
-                multicore_mode="batch",
-                output_axm_format=True,
-                model_name=model_name,
-            )
-        else:  # YOLOv8
-            config = CompilerConfig(
-                tiling_depth=6,
-                split_buffer_promotion=True,
-                resources_used=0.25,
-                aipu_cores_used=1,
-                multicore_mode="batch",
-                output_axm_format=True,
-                model_name=model_name,
-            )
-        export_path = onnx2axelera(
-            onnx_file=onnx_path,
-            compile_config=config,
-            metadata=self.metadata,
+        output_dir = self.file.parent / f"{self.file.stem}_axelera_model"
+        return torch2axelera(
+            model=self.model,
+            output_dir=output_dir,
             calibration_dataset=self.get_int8_calibration_dataloader(prefix),
             transform_fn=self._transform_fn,
+            model_name=self.file.stem,
+            metadata=self.metadata,
             prefix=prefix,
         )
-        return export_path
 
     @try_export
     def export_executorch(self, prefix=colorstr("ExecuTorch:")):
@@ -1069,7 +1042,13 @@ class Exporter:
         check_executorch_requirements()
         from ultralytics.utils.export.executorch import torch2executorch
 
-        return torch2executorch(self.model, self.file, self.im, metadata=self.metadata, prefix=prefix)
+        return torch2executorch(
+            model=self.model,
+            im=self.im,
+            output_dir=str(self.file).replace(self.file.suffix, "_executorch_model/"),
+            metadata=self.metadata,
+            prefix=prefix,
+        )
 
     @try_export
     def export_edgetpu(self, tflite_model="", prefix=colorstr("Edge TPU:")):
@@ -1092,10 +1071,9 @@ class Exporter:
         from ultralytics.utils.export.tensorflow import tflite2edgetpu
 
         LOGGER.info(f"\n{prefix} starting export with Edge TPU compiler {ver}...")
-        tflite2edgetpu(tflite_file=tflite_model, output_dir=tflite_model.parent, prefix=prefix)
-        f = str(tflite_model).replace(".tflite", "_edgetpu.tflite")  # Edge TPU model
-        self._add_tflite_metadata(f)
-        return f
+        output_file = tflite2edgetpu(tflite_file=tflite_model, output_dir=tflite_model.parent, prefix=prefix)
+        self._add_tflite_metadata(output_file)
+        return output_file
 
     @try_export
     def export_tfjs(self, prefix=colorstr("TensorFlow.js:")):
@@ -1103,12 +1081,15 @@ class Exporter:
         check_requirements("tensorflowjs")
         from ultralytics.utils.export.tensorflow import pb2tfjs
 
-        f = str(self.file).replace(self.file.suffix, "_web_model")  # js dir
-        f_pb = str(self.file.with_suffix(".pb"))  # *.pb path
-        pb2tfjs(pb_file=f_pb, output_dir=f, half=self.args.half, int8=self.args.int8, prefix=prefix)
-        # Add metadata
-        YAML.save(Path(f) / "metadata.yaml", self.metadata)  # add metadata.yaml
-        return f
+        output_dir = pb2tfjs(
+            pb_file=str(self.file.with_suffix(".pb")),
+            output_dir=str(self.file).replace(self.file.suffix, "_web_model/"),
+            half=self.args.half,
+            int8=self.args.int8,
+            prefix=prefix,
+        )
+        YAML.save(Path(output_dir) / "metadata.yaml", self.metadata)
+        return output_dir
 
     @try_export
     def export_rknn(self, prefix=colorstr("RKNN:")):
@@ -1117,7 +1098,13 @@ class Exporter:
 
         self.args.opset = min(self.args.opset or 19, 19)  # rknn-toolkit expects opset<=19
         f_onnx = self.export_onnx()
-        return onnx2rknn(f_onnx, name=self.args.name, metadata=self.metadata, prefix=prefix)
+        return onnx2rknn(
+            onnx_file=f_onnx,
+            output_dir=str(self.file).replace(self.file.suffix, f"_rknn_model{os.sep}"),
+            name=self.args.name,
+            metadata=self.metadata,
+            prefix=prefix,
+        )
 
     @try_export
     def export_imx(self, prefix=colorstr("IMX:")):
@@ -1157,11 +1144,11 @@ class Exporter:
                 check_apt_requirements(["openjdk-17-jre"])
 
         return torch2imx(
-            self.model,
-            self.file,
-            self.args.conf,
-            self.args.iou,
-            self.args.max_det,
+            model=self.model,
+            output_dir=str(self.file).replace(self.file.suffix, "_imx_model/"),
+            conf=self.args.conf,
+            iou=self.args.iou,
+            max_det=self.args.max_det,
             metadata=self.metadata,
             dataset=self.get_int8_calibration_dataloader(prefix),
             prefix=prefix,
