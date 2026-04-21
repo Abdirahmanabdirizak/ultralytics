@@ -5,10 +5,20 @@ Usage:
     python run_enc_distill_phase2.py <gpu> <phase1_weights> <mode> [name] [phase1_wandb_id] [epochs] [patience]
     python run_enc_distill_phase2.py <gpu> --resume <last.pt>
 
-    mode: "inet_finetune" (ImageNet MuSGD ft), "inet_linear_probe" (ImageNet AdamW linear probe), "inet_adamw_finetune" (ImageNet AdamW ft), "coco_det_finetune" (COCO detection), "coco_pose_finetune" (COCO pose)
+    mode: "inet_finetune" (ImageNet MuSGD ft), "inet_linear_probe" (ImageNet AdamW linear probe),
+          "inet_adamw_finetune" (ImageNet AdamW ft), "coco_det_finetune" (COCO detection,
+          yolo26s.pt-aligned recipe), "coco_det_finetune_frozen" (COCO det, frozen backbone),
+          "coco_pose_finetune" (COCO pose)
 
-Finetune params match exp5b (reproduced CE baseline, 75.95% top-1) exactly,
-only epochs/patience shortened for faster evaluation.
+Flags:
+    --resume <path>: resume from checkpoint (all modes)
+    --fork_from <parent_id>:<fork_step>: wandb-fork continuation (all modes)
+    --lr <val>: override lr0. For coco_det_finetune this is the RECIPE lr0 at canonical
+                bs=128 and gets scaled by --batch. For other modes it is the FINAL lr0.
+    --batch <int>: override batch size. For coco_det_finetune, also scales lr0, nbs, and
+                warmup_epochs linearly (canonical bs=128, nbs=64 -> wd_eff and lr/sample
+                stay invariant). For other modes it is applied as-is.
+    --nbs <int>: explicit nbs override (coco_det_finetune; bypasses auto-scaling).
 """
 
 import sys
@@ -41,6 +51,8 @@ def _load_train_args(resume: str) -> dict:
     return torch.load(Path(resume), map_location="cpu", weights_only=False)["train_args"]
 
 
+_COCO_DET_MODES = ("coco_det_finetune", "coco_det_finetune_frozen")
+
 _AUG_ARGS = dict(
     hsv_h=0.015,
     hsv_s=0.4,
@@ -61,6 +73,8 @@ def main(argv: list[str]) -> None:
     argv, resume = _pop_flag(argv, "--resume")
     argv, fork_from = _pop_flag(argv, "--fork_from")
     argv, lr_override = _pop_flag(argv, "--lr")
+    argv, batch_override = _pop_flag(argv, "--batch")
+    argv, nbs_override = _pop_flag(argv, "--nbs")
     if resume:
         resume = paths.patch_resume(resume)
     resume_args = _load_train_args(resume) if resume else {}
@@ -153,19 +167,32 @@ def main(argv: list[str]) -> None:
             optimizer="AdamW",
             **_AUG_ARGS,
         )
-    elif mode in ("coco_det_finetune", "coco_det_finetune_frozen"):
+    elif mode in _COCO_DET_MODES:
+        # yolo26s.pt canonical: batch=128, nbs=64, lr0=0.00038, warmup_epochs=0.98745.
+        # Scale linearly when --batch overrides canonical so lr/sample, wd_eff = wd*batch/nbs,
+        # and warmup span (in samples) stay invariant.
+        coco_batch = int(batch_override) if batch_override else 128
+        coco_scale = coco_batch / 128.0
+        coco_nbs = max(1, int(nbs_override) if nbs_override else int(round(64 * coco_scale)))
+        coco_base_lr = float(lr_override) if lr_override else 0.00038
+        coco_lr0 = coco_base_lr * coco_scale
+        coco_warmup = 0.98745 * coco_scale
+        print(
+            f"[coco_det_finetune] batch={coco_batch} nbs={coco_nbs} lr0={coco_lr0:.5f} "
+            f"warmup_epochs={coco_warmup:.3f} (scale={coco_scale:.2f}x vs canonical bs=128)"
+        )
         train_args.update(
             data="coco.yaml",
             epochs=epochs or 70,
-            batch=128,
+            batch=coco_batch,
             imgsz=640,
-            nbs=64,
+            nbs=coco_nbs,
             patience=patience or 100,
-            lr0=0.00038,
+            lr0=coco_lr0,
             lrf=0.88219,
             momentum=0.94751,
             weight_decay=0.00027,
-            warmup_epochs=0.98745,
+            warmup_epochs=coco_warmup,
             warmup_momentum=0.54064,
             warmup_bias_lr=0.05684,
             cos_lr=False,
@@ -198,7 +225,7 @@ def main(argv: list[str]) -> None:
         # is set via callback since it isn't in DEFAULT_CFG_DICT either.
         model.add_callback("on_train_start", muon_w.override(0.4355))
         if mode == "coco_det_finetune_frozen":
-            train_args["freeze"] = 9  # freeze backbone layers 0-8
+            train_args["freeze"] = 9
     elif mode == "coco_pose_finetune":
         train_args.update(
             data="coco-pose.yaml",
@@ -250,8 +277,15 @@ def main(argv: list[str]) -> None:
             optimizer="MuSGD",
             **_AUG_ARGS,
         )
-    if lr_override:
-        train_args["lr0"] = float(lr_override)
+    # lr/batch/nbs are handled per-mode for coco_det_finetune (scaled); for other modes
+    # they apply as final values.
+    if mode not in _COCO_DET_MODES:
+        if lr_override:
+            train_args["lr0"] = float(lr_override)
+        if batch_override:
+            train_args["batch"] = int(batch_override)
+        if nbs_override:
+            train_args["nbs"] = int(nbs_override)
     if resume:
         train_args["resume"] = resume
     if fork_from:
