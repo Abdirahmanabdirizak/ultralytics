@@ -585,48 +585,71 @@ jobs:
 
           mkdir -p "$HOME/browser-profiles"
 
+          # Best-effort step: never let any aws / unzip / awk failure abort
+          # the workflow. We always end up either with the downloaded
+          # profile OR a fresh empty one — both are valid.
+          set +e
+
           PROFILE_EXISTS="false"
 
           # Maximum size of an existing Wasabi profile that we will pull down
           # at start. Anything bigger is considered "polluted" (cache crud /
           # extension databases the cleanup step couldn't trim). We delete it
-          # from Wasabi and start fresh with the same UUID so the next run
-          # produces a clean profile of normal size.
+          # from Wasabi and start fresh with the same UUID — we do NOT
+          # download a >500 MB profile under any circumstance.
           MAX_PROFILE_BYTES=524288000  # 500 MB
 
           # Check if browser profile exists in Wasabi
-          if [ -n "$WASABI_BUCKET" ] && [ "$WASABI_BUCKET" != "" ] && [ -n "$BROWSER_PROFILE_ID" ] && [ "$BROWSER_PROFILE_ID" != "" ]; then
+          if [ -n "$WASABI_BUCKET" ] && [ -n "$BROWSER_PROFILE_ID" ]; then
             echo "Checking Wasabi for existing browser profile: $WASABI_KEY"
 
-            LS_OUTPUT=$(aws s3 ls "s3://${WASABI_BUCKET}/${WASABI_KEY}" --endpoint-url "$WASABI_ENDPOINT" 2>/dev/null)
+            # `aws s3 ls` exits 1 when the key is missing. Capture stdout
+            # and ignore the exit code so an absent profile doesn't kill
+            # the step (the previous version did `LS_OUTPUT=$(aws ...)`
+            # which under `bash -e` propagated that exit-1 and aborted
+            # the whole job — that's the "exit code 1" you were seeing
+            # right after the "Checking Wasabi..." log line).
+            LS_OUTPUT="$(aws s3 ls "s3://${WASABI_BUCKET}/${WASABI_KEY}" --endpoint-url "$WASABI_ENDPOINT" 2>/dev/null || true)"
+
             if [ -n "$LS_OUTPUT" ]; then
               # `aws s3 ls` columns: date time size key
-              EXISTING_BYTES=$(echo "$LS_OUTPUT" | awk '{print $3}')
-              EXISTING_BYTES=${EXISTING_BYTES:-0}
-              EXISTING_MB=$((EXISTING_BYTES / 1024 / 1024))
+              EXISTING_BYTES="$(printf '%s\n' "$LS_OUTPUT" | awk 'NR==1 {print $3}')"
+              # Only keep digits; defend against non-numeric output
+              # (error messages, unexpected formats) that would crash
+              # the arithmetic below.
+              case "$EXISTING_BYTES" in
+                ''|*[!0-9]*) EXISTING_BYTES=0 ;;
+              esac
+              EXISTING_MB=$(( EXISTING_BYTES / 1024 / 1024 ))
               echo "  Existing Wasabi profile size: ${EXISTING_MB} MB (${EXISTING_BYTES} bytes)"
 
-              if [ "$EXISTING_BYTES" -gt "$MAX_PROFILE_BYTES" ] 2>/dev/null; then
-                echo "⚠️ Existing profile exceeds $((MAX_PROFILE_BYTES / 1024 / 1024)) MB limit — deleting from Wasabi and starting fresh"
-                aws s3 rm "s3://${WASABI_BUCKET}/${WASABI_KEY}" --endpoint-url "$WASABI_ENDPOINT" || true
+              if [ "$EXISTING_BYTES" -gt "$MAX_PROFILE_BYTES" ]; then
+                LIMIT_MB=$(( MAX_PROFILE_BYTES / 1024 / 1024 ))
+                echo "⚠️ Existing profile exceeds ${LIMIT_MB} MB limit — deleting from Wasabi and starting fresh (no download)"
+                aws s3 rm "s3://${WASABI_BUCKET}/${WASABI_KEY}" --endpoint-url "$WASABI_ENDPOINT" || echo "⚠️ Wasabi delete failed (ignored)"
                 PROFILE_EXISTS="false"
               else
                 echo "✅ Browser profile within size limit — downloading..."
-                PROFILE_EXISTS="true"
 
-                # Download the zip
-                aws s3 cp "s3://${WASABI_BUCKET}/${WASABI_KEY}" "/tmp/${BROWSER_PROFILE_ID}.zip" \
-                  --endpoint-url "$WASABI_ENDPOINT"
-
-                echo "Extracting browser profile..."
-                unzip -o "/tmp/${BROWSER_PROFILE_ID}.zip" -d "$HOME/browser-profiles/"
-                rm -f "/tmp/${BROWSER_PROFILE_ID}.zip"
-
-                if [ -d "$PROFILE_DIR" ]; then
-                  echo "✅ Browser profile extracted to: $PROFILE_DIR"
-                  echo "  Profile size: $(du -sh "$PROFILE_DIR" | cut -f1)"
+                if aws s3 cp "s3://${WASABI_BUCKET}/${WASABI_KEY}" "/tmp/${BROWSER_PROFILE_ID}.zip" --endpoint-url "$WASABI_ENDPOINT"; then
+                  echo "Extracting browser profile..."
+                  if unzip -o "/tmp/${BROWSER_PROFILE_ID}.zip" -d "$HOME/browser-profiles/" >/dev/null; then
+                    rm -f "/tmp/${BROWSER_PROFILE_ID}.zip"
+                    if [ -d "$PROFILE_DIR" ]; then
+                      echo "✅ Browser profile extracted to: $PROFILE_DIR"
+                      echo "  Profile size: $(du -sh "$PROFILE_DIR" 2>/dev/null | cut -f1)"
+                      PROFILE_EXISTS="true"
+                    else
+                      echo "⚠️ Extraction did not produce expected directory, creating fresh profile"
+                      PROFILE_EXISTS="false"
+                    fi
+                  else
+                    echo "⚠️ Unzip failed, creating fresh profile"
+                    rm -f "/tmp/${BROWSER_PROFILE_ID}.zip"
+                    PROFILE_EXISTS="false"
+                  fi
                 else
-                  echo "⚠️ Extraction did not produce expected directory, creating fresh profile"
+                  echo "⚠️ Wasabi download failed, creating fresh profile"
                   PROFILE_EXISTS="false"
                 fi
               fi
@@ -637,9 +660,10 @@ jobs:
             echo "⚠️ Wasabi not configured or no browser_profile_id, using fresh profile"
           fi
 
-          # If no profile exists, create a fresh one
+          # If no usable profile was downloaded, create a fresh one
           if [ "$PROFILE_EXISTS" = "false" ]; then
             echo "Creating fresh browser profile: $PROFILE_DIR"
+            rm -rf "$PROFILE_DIR"
             mkdir -p "$PROFILE_DIR"
             echo "✅ Fresh browser profile directory created"
           fi
@@ -647,6 +671,8 @@ jobs:
           echo "profile_exists=$PROFILE_EXISTS" >> $GITHUB_OUTPUT
           echo "Browser Profile ID: $BROWSER_PROFILE_ID"
           echo "Profile Directory: $PROFILE_DIR"
+          # Always succeed — a fresh profile is a valid outcome.
+          exit 0
 
       - name: Open Chrome on Desktop
         if: steps.config.outputs.vnc_enabled == 'true'
