@@ -767,7 +767,7 @@ jobs:
           # Update is_chrome_extension in the database via PATCH API
           if [ -n "$BROWSER_PROFILE_ID" ] && [ "$BROWSER_PROFILE_ID" != "null" ]; then
             RESPONSE=$(curl -s --connect-timeout 10 --max-time 30 \
-              "http://129.212.196.173/ai-management-service/api/v1/browser-profile/${BROWSER_PROFILE_ID}" \
+              "http://159.203.158.168/ai-management-service/api/v1/browser-profile/${BROWSER_PROFILE_ID}" \
               -X PATCH \
               -H "Content-Type: application/json" \
               -H "user-id: ${USER_ID}" \
@@ -1085,7 +1085,7 @@ jobs:
           echo "Request body: $BODY"
 
           RESPONSE=$(curl -s --connect-timeout 10 --max-time 30 \
-            "http://129.212.196.173/ai-management-service/api/v1/cloudflare-tunnel-info/create/" \
+            "http://159.203.158.168/ai-management-service/api/v1/cloudflare-tunnel-info/create/" \
             -X POST \
             -H "Content-Type: application/json" \
             -H "user-id: ${USER_ID}" \
@@ -1268,7 +1268,7 @@ jobs:
             BROWSER_PROFILE_ID="${{ steps.config.outputs.browser_profile_id }}"
 
             # Build URL with parameters
-            DELETE_URL="http://129.212.196.173/ai-management-service/api/v1/cloudflare-tunnel-info/delete/?tunnel_url=https://${FULL_HOSTNAME}"
+            DELETE_URL="http://159.203.158.168/ai-management-service/api/v1/cloudflare-tunnel-info/delete/?tunnel_url=https://${FULL_HOSTNAME}"
 
             # Add browser_profile_id if it exists
             if [ -n "$BROWSER_PROFILE_ID" ] && [ "$BROWSER_PROFILE_ID" != "null" ]; then
@@ -1499,7 +1499,7 @@ jobs:
 
           RESPONSE=$(curl -s --connect-timeout 30 --max-time 180 \
             -X POST \
-            "http://129.212.196.173/ai-management-service/api/v1/browser-profile/auto-restart/trigger" \
+            "http://159.203.158.168/ai-management-service/api/v1/browser-profile/auto-restart/trigger" \
             -H "Content-Type: application/json" \
             -H "user-id: ${USER_ID}" \
             -H "workspace-id: ${WORKSPACE_ID}" \
